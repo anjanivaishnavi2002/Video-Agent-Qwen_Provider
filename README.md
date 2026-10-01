@@ -1,3 +1,4 @@
+
 # AI Video Interview Agent (BPO)
 
 A hands-free, voice-based AI interviewer. The candidate enters a name and uploads a resume;
@@ -95,3 +96,6 @@ memory. A VM running compose is the simplest thing that works. Run **one backend
 * Recording uploads once at the end of the interview; a closed tab loses it. The AI's voice is not in the recording.
 * Face monitoring downloads its model from Google at page load (or host it yourself: `FACE_MODEL_URL`).
 * The candidate-facing endpoints (`/resume/upload`, `/session/start`) are unauthenticated and not rate limited.
+=======
+# Video_Agent-
+>>>>>>> origin/main
