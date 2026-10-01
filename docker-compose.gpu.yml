@@ -1,0 +1,11 @@
+# Add on a GPU VM (NVIDIA driver + nvidia-container-toolkit installed):
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile cloudsql up -d
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

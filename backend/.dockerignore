@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+uploads/
+voices/
+tests/
+migrations/
+.pytest_cache/
+*.md

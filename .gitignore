@@ -1,0 +1,31 @@
+# secrets
+.env
+*.env
+!.env.example
+backend/.env
+*.pem
+*.key
+service-account*.json
+
+# python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# node
+node_modules/
+frontend/dist/
+
+# runtime data / big model files (the Docker build downloads the voices)
+uploads/
+backend/uploads/
+backend/voices/
+*.onnx
+
+# local leftovers
+_backup_before_refactor.zip
+_stage*.tgz
+*.log
+.DS_Store

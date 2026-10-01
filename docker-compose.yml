@@ -1,0 +1,82 @@
+# Production stack for ONE Compute Engine VM.
+#   web      Caddy: React app + HTTPS + /api proxy
+#   backend  FastAPI + Faster-Whisper + Piper
+#   ollama   Qwen 2.5 (add docker-compose.gpu.yml on a GPU VM)
+#   cloudsql-proxy   secure tunnel to Cloud SQL (profile "cloudsql")
+#
+# Production:  docker compose --profile cloudsql up -d
+# Local test:  docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
+name: video-agent
+
+services:
+  web:
+    image: ${REGISTRY:-video-agent}/web:${TAG:-latest}
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: /api
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  backend:
+    image: ${REGISTRY:-video-agent}/backend:${TAG:-latest}
+    build:
+      context: ./backend
+      args:
+        WHISPER_MODEL: ${WHISPER_MODEL:-base}
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      ENABLE_DEBUG_ENDPOINTS: "false"
+    volumes:
+      - backend_data:/data
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  # One-shot job: downloads the model named in LLM_MODEL, then exits.
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c", "ollama pull ${LLM_MODEL:-qwen2.5:3b-instruct}"]
+    restart: "no"
+
+  cloudsql-proxy:
+    profiles: ["cloudsql"]
+    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2
+    # CLOUDSQL_INSTANCE = project:region:instance   (uses the VM's service account)
+    command: ["--address=0.0.0.0", "--port=5432", "${CLOUDSQL_FLAGS:---private-ip}", "${CLOUDSQL_INSTANCE:-}"]
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
+  backend_data:
+  ollama_models:

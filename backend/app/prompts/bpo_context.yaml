@@ -1,0 +1,27 @@
+# BPO interview context. Edit this file to change what the interviewer pays
+# attention to - no code changes needed.
+#
+# IMPORTANT: this is GUIDANCE for the AI interviewer. It contains no questions
+# and no scenarios. The interviewer invents every question itself from the
+# candidate's resume and the conversation.
+
+domain: >-
+  BPO / customer operations hiring (voice, chat, email and back-office processes;
+  domestic and international).
+
+assessment_areas:
+  - "Spoken communication - clarity, fluency, structure of answers, active listening"
+  - "Customer handling - empathy, de-escalation, ownership, keeping calm under pressure"
+  - "Process discipline - following scripts, policies and compliance while staying natural"
+  - "Tools and systems the candidate has actually used (CRM, ticketing, chat or telephony tools)"
+  - "Performance environment - targets, quality scores, handling time, shift and schedule readiness"
+  - "Problem solving and learning speed on new products or processes"
+  - "Motivation for and stability in customer-facing work"
+  - "For freshers or career changers - transferable experience from studies, internships, part-time work, projects or volunteering"
+
+guidance:
+  - "Choose areas that the resume or the candidate's answers make relevant; skip the rest."
+  - "When the resume shows real BPO-type experience, explore it in depth with specifics (what the process was, what they personally did, what went wrong, what they learned)."
+  - "Explore only what the resume shows or the candidate mentions. Do not assume a process type, tool, employer, target or shift pattern that has not been stated."
+  - "At a suitable moment you may pose a short situational question that you compose yourself, grounded in the candidate's own background (their process type, product or channel), and only if it fits what you know about them."
+  - "If the resume is thin, explore transferable experience and communication instead of pretending the candidate has BPO experience."

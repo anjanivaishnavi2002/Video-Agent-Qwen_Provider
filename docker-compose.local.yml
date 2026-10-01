@@ -1,0 +1,33 @@
+# Overlay for trying the whole stack on your own machine (no GCP needed):
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
+# Open http://localhost:8080
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: video_agent
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d video_agent"]
+      interval: 5s
+      retries: 10
+
+  backend:
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/video_agent
+      STORAGE_BACKEND: local
+      ENABLE_DEBUG_ENDPOINTS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    ports: !override
+      - "8080:80"
+    environment:
+      SITE_ADDRESS: ":80"
+
+volumes:
+  pg_data:

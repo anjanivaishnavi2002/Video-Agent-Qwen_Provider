@@ -1,0 +1,30 @@
+# SITE_ADDRESS examples:
+#   :80                    plain HTTP (local testing)
+#   interview.example.com  automatic Let's Encrypt HTTPS (needs DNS pointing here + ports 80/443 open)
+{$SITE_ADDRESS::80} {
+	encode zstd gzip
+
+	# Browser -> /api/...  ->  backend:8000/...   (the /api prefix is stripped)
+	handle_path /api/* {
+		reverse_proxy backend:8000 {
+			flush_interval -1
+			transport http {
+				response_header_timeout 300s
+			}
+		}
+	}
+
+	# React app (single page): unknown paths fall back to index.html
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(self), microphone=(self), fullscreen=(self)"
+	}
+}

@@ -1,0 +1,47 @@
+# Consent form shown to every candidate BEFORE anything is collected.
+# Edit freely - no code changes needed. $placeholders are filled from settings:
+#   $organization  ORGANIZATION_NAME      $retention_days  DATA_RETENTION_DAYS
+#   $contact       CONSENT_CONTACT_EMAIL  $interviewer     INTERVIEWER_NAME
+#   $minutes       INTERVIEW_DURATION_MINUTES
+#
+# IMPORTANT: change `version` whenever the wording changes. Each candidate's agreement
+# is stored with this version and a timestamp. Have your legal/HR team review the text.
+
+version: "2026-10-v1"
+title: "Consent to an AI-assisted interview"
+intro: "Please read this carefully before you start. This screening interview is run by an AI interviewer on behalf of $organization."
+
+sections:
+  - heading: "What the interview is"
+    body:
+      - "You will have a spoken conversation with an AI interviewer named $interviewer. It asks questions based on your resume and on what you say. It takes about $minutes minutes."
+
+  - heading: "What we collect"
+    bullets:
+      - "Your name and your resume"
+      - "Audio of your answers and a written transcript of them"
+      - "Video from your camera for the whole interview"
+      - "Simple camera observations: whether your face is visible, whether more than one face is in view, and large head movements"
+    body:
+      - "We do not try to read your emotions, confidence, honesty, personality or state of mind."
+
+  - heading: "Why we collect it"
+    body:
+      - "To carry out your interview and to let $organization's hiring team review it when considering you for roles."
+
+  - heading: "How AI is used"
+    body:
+      - "The AI asks the questions and turns your speech into text. It does not decide whether you are hired. People on the hiring team review your interview."
+
+  - heading: "Who can see it and how long we keep it"
+    body:
+      - "Only authorised members of the hiring team can access your data, and it is stored securely. We keep it for up to $retention_days days unless the law requires otherwise or you ask us to delete it sooner."
+
+  - heading: "Your choices"
+    body:
+      - "Taking part is voluntary. You can stop at any time with the End Interview button. To ask what we hold about you, or to have it deleted, contact $contact."
+
+statements:
+  - "I have read and understood the information above."
+  - "I consent to my camera, microphone, resume and interview answers being recorded and processed as described."
+  - "I understand I am speaking with an AI interviewer and that people will review my interview."

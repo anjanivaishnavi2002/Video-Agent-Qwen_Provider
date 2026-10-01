@@ -1,0 +1,78 @@
+import threading
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api import config as config_api
+from app.api import resume, session, voice
+from app.config import settings
+from app.db.database import init_db
+from app.services import voice_service
+
+init_db()
+
+for sub in (settings.RESUME_SUBDIR, settings.VIDEO_SUBDIR):
+    Path(settings.UPLOAD_DIR, sub).mkdir(parents=True, exist_ok=True)
+
+
+def _warm_up_models() -> None:
+    """Load Whisper + Piper in the background so the first answer isn't slow."""
+    try:
+        voice_service.warm_up()
+        print("Voice models loaded.")
+    except Exception as exc:  # never crash the server because of warm-up
+        print(f"Voice model warm-up failed: {exc}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if settings.PRELOAD_MODELS:
+        threading.Thread(target=_warm_up_models, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="AI Video Interview Agent", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins_list,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(config_api.router)
+app.include_router(resume.router)
+app.include_router(session.router)
+if settings.ENABLE_DEBUG_ENDPOINTS:  # raw STT/TTS: local debugging only
+    app.include_router(voice.router)
+
+
+@app.get("/")
+def root():
+    return {"message": "AI Video Interview Agent is running"}
+
+
+@app.get("/healthz")
+def healthz():
+    """Cheap liveness probe for Docker / load balancers (does not touch Ollama)."""
+    return {"status": "ok"}
+
+
+@app.get("/health")
+def health():
+    """Quick diagnosis: is the backend up, and can it reach Ollama and find the model?"""
+    result = {"status": "ok", "llm_model": settings.LLM_MODEL, "ollama_host": settings.OLLAMA_HOST}
+    try:
+        from ollama import Client
+
+        listed = Client(host=settings.OLLAMA_HOST, timeout=5).list()
+        names = [m.get("model") or m.get("name") for m in (listed.get("models") if isinstance(listed, dict) else listed.models)]
+        result["ollama"] = "reachable"
+        result["model_installed"] = settings.LLM_MODEL in names
+        result["installed_models"] = names
+    except Exception as exc:
+        result["status"] = "ollama_unreachable"
+        result["ollama"] = f"{type(exc).__name__}: {exc}"
+    return result
