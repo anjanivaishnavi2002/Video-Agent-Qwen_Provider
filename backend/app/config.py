@@ -115,8 +115,10 @@ class Settings(BaseSettings):
     LLM_TIMEOUT_SECONDS: float = 60.0
 
     # Automatic retry configuration.
-    LLM_MAX_RETRIES: int = 2
-    LLM_RETRY_BACKOFF_SECONDS: float = 1.0
+    LLM_MAX_RETRIES: int = 3
+    LLM_RETRY_BACKOFF_SECONDS: float = 2.0
+    # Used only when the main model stays overloaded / rate limited after the retries. Empty = no fallback.
+    LLM_FALLBACK_MODEL: str = "gemini-3.5-flash-lite"
 
     # Resume analysis.
     RESUME_ANALYSIS_TEMPERATURE: float = 0.1

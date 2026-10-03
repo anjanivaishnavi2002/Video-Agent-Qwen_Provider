@@ -2,8 +2,10 @@
 Post-interview report: a factual summary of what was said, plus a deterministic report of the
 observable recording events (face missing / returned / multiple faces / head movement).
 
-Deliberately NOT included: emotion, confidence, honesty or personality inference, scores, or hiring
-recommendations. The summary comes from the transcript only; the event report is plain counting.
+Scorecard: criteria are chosen by the model from the role discussed in the interview (nothing is hard-coded),
+each scored 1-5 with evidence from the transcript. It rates ONLY the content of what the candidate said - never
+voice, accent, appearance, emotion, confidence, honesty or personality - and it is advisory: a person decides.
+There is no hire / reject recommendation. The event report is plain counting.
 """
 import logging
 from datetime import datetime
@@ -28,6 +30,65 @@ SUMMARY_SCHEMA = {
     },
     "required": ["overview", "topics_discussed", "stated_experience"],
 }
+
+SCORECARD_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "criteria": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "score": {"type": "integer"},
+                    "evidence": {"type": "string"},
+                },
+                "required": ["name", "score", "evidence"],
+            },
+        },
+        "strengths": {"type": "array", "items": {"type": "string"}},
+        "areas_to_probe": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["criteria"],
+}
+
+SCORECARD_NOTE = (
+    "Advisory only. Scores rate the content of the candidate's spoken answers against criteria drawn from the role "
+    "discussed in the interview. They do not rate voice, accent, appearance, emotion, confidence or honesty, and "
+    "they are not a hiring decision. A person should review the transcript."
+)
+MIN_ANSWERS_FOR_SCORECARD = 3
+
+
+def clean_scorecard(raw: dict | None) -> dict | None:
+    """Validate the model's scorecard: clamp scores to 1-5, drop empty rows, compute the overall score here."""
+    if not isinstance(raw, dict):
+        return None
+    criteria = []
+    for item in (raw.get("criteria") or [])[:8]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()
+        evidence = str(item.get("evidence", "")).strip()
+        try:
+            score = int(round(float(item.get("score"))))
+        except (TypeError, ValueError):
+            continue
+        if not name or not evidence:      # a score without evidence from the transcript is not shown
+            continue
+        criteria.append({"name": name[:80], "score": max(1, min(5, score)), "evidence": evidence[:400]})
+    if not criteria:
+        return None
+    overall = round(sum(c["score"] for c in criteria) / len(criteria), 1)
+    return {
+        "criteria": criteria,
+        "overall_score": overall,
+        "scale": "1 (no relevant evidence) to 5 (specific, relevant and well explained)",
+        "strengths": [str(x)[:300] for x in (raw.get("strengths") or [])[:6] if str(x).strip()],
+        "areas_to_probe": [str(x)[:300] for x in (raw.get("areas_to_probe") or [])[:6] if str(x).strip()],
+        "note": SCORECARD_NOTE,
+    }
+
 
 EVENT_NOTE = (
     "These are observable camera events only (a face was or was not in view, how many faces, head movement). "
@@ -117,6 +178,32 @@ def build_summary(interview: Interview, candidate_name: str) -> dict:
 
     report["model"] = settings.active_model
     report["interview"] = {k: summary.get(k, []) for k in SUMMARY_SCHEMA["properties"]}
+
+    if answers < MIN_ANSWERS_FOR_SCORECARD:
+        report["scorecard"] = {
+            "status": "skipped",
+            "reason": f"Only {answers} candidate answer(s): not enough to score fairly.",
+        }
+        return report
+    try:
+        raw = get_llm().chat_json(
+            [
+                {"role": "system", "content": prompts["scorecard_system"]},
+                {"role": "user", "content": render(
+                    prompts["scorecard_user"], candidate_name=candidate_name, minutes=minutes,
+                    answers=answers, transcript=format_transcript(transcript))},
+            ],
+            SCORECARD_SCHEMA,
+            temperature=settings.SUMMARY_TEMPERATURE,
+        )
+        card = clean_scorecard(raw)
+        report["scorecard"] = (
+            {"status": "ready", **card} if card
+            else {"status": "failed", "error": "The model returned no usable scores."}
+        )
+    except LLMError as exc:
+        logger.error("Scorecard failed: %s | %s", exc.message, exc.detail)
+        report["scorecard"] = {"status": "failed", "error": exc.message}
     return report
 
 

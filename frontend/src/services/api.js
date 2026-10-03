@@ -241,3 +241,26 @@ export async function uploadVideo(sessionId, videoBlob) {
   );
   return response.json();
 }
+
+// ---------------------------------------------------------
+// Post-interview report (summary + scorecard + recording events)
+// ---------------------------------------------------------
+
+export async function getInterviewReport(sessionId) {
+  const response = await request(
+    `/session/${sessionId}/result`,
+    { headers: authHeaders() },
+    "Could not load the interview report"
+  );
+  const data = await response.json();
+  return data.summary || null;
+}
+
+export async function generateInterviewReport(sessionId) {
+  const response = await request(
+    `/session/${sessionId}/summary`,
+    { method: "POST", headers: authHeaders() },
+    "Could not create the interview report"
+  );
+  return response.json();
+}

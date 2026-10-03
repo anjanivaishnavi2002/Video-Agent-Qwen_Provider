@@ -140,33 +140,45 @@ class GeminiProvider:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+    def _models(self) -> list[str]:
+        fallback = (settings.LLM_FALLBACK_MODEL or "").strip()
+        return [self.model] + ([fallback] if fallback and fallback != self.model else [])
+
     def _run(self, messages, schema, temperature, *, parse: bool, max_tokens: int | None = None):
         system, contents = _to_contents(messages)
         config = self._config(system, schema, temperature, max_tokens)
         attempts = 1 + max(0, settings.LLM_MAX_RETRIES)
+        first_error: LLMError | None = None
+        models = self._models()
 
-        for attempt in range(1, attempts + 1):
-            started = time.time()
-            try:
-                response = self._client.models.generate_content(
-                    model=self.model, contents=contents, config=config
-                )
-                text = _extract_text(response)
-                result = _parse_structured(text, schema) if parse else text
-                self._log_usage(response, started)
-                return result
-            except Exception as exc:  # translated into one typed error
-                error = exc if isinstance(exc, LLMError) else _translate(exc)
-                logger.warning(
-                    "LLM call failed (attempt %d/%d): %s: %s | %s",
-                    attempt, attempts, type(error).__name__, error.message, error.detail or "",
-                )
-                if error.retryable and attempt < attempts:
-                    time.sleep(settings.LLM_RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)))
-                    continue
-                if error is exc:
-                    raise
-                raise error from exc
+        for index, model in enumerate(models):
+            for attempt in range(1, attempts + 1):
+                started = time.time()
+                try:
+                    response = self._client.models.generate_content(
+                        model=model, contents=contents, config=config
+                    )
+                    text = _extract_text(response)
+                    result = _parse_structured(text, schema) if parse else text
+                    self._log_usage(response, started)
+                    if index:
+                        logger.warning("Answered by the fallback model %s (primary %s was unavailable)", model, self.model)
+                    return result
+                except Exception as exc:  # translated into one typed error
+                    error = exc if isinstance(exc, LLMError) else _translate(exc)
+                    logger.warning(
+                        "LLM call failed (model %s, attempt %d/%d): %s: %s | %s",
+                        model, attempt, attempts, type(error).__name__, error.message, error.detail or "",
+                    )
+                    if error.retryable and attempt < attempts:
+                        time.sleep(settings.LLM_RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)))
+                        continue
+                    first_error = first_error or error
+                    if error.retryable and index + 1 < len(models):
+                        break                      # still overloaded / rate limited: try the fallback model
+                    # not retryable, or nothing left to try: report the PRIMARY model's problem
+                    raise first_error from exc
+        raise first_error or LLMError("The AI service did not answer.")
 
     def _config(self, system, schema, temperature, max_tokens) -> types.GenerateContentConfig:
         cfg: dict = {

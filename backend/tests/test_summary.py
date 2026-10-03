@@ -94,3 +94,52 @@ def test_no_answers_means_no_summary(env, monkeypatch):  # noqa: F811
     started = client.post("/session/start", json={"candidate_id": _upload(client).json()["candidate_id"]}).json()
     client.post(f"/session/{started['session_id']}/end", json={})
     assert client.post(f"/session/{started['session_id']}/summary").json()["status"] == "skipped"
+
+
+# ---------------- scorecard ----------------
+
+def test_clean_scorecard_clamps_scores_and_drops_unsupported_rows():
+    card = summary_service.clean_scorecard({
+        "criteria": [
+            {"name": "Handling difficult callers", "score": 9, "evidence": "Described calming an angry customer."},
+            {"name": "Product knowledge", "score": 3, "evidence": "Mentioned billing disputes."},
+            {"name": "No evidence row", "score": 5, "evidence": ""},          # dropped: nothing to point to
+            {"name": "Bad score", "score": "n/a", "evidence": "x"},           # dropped: not a number
+        ],
+        "strengths": ["Clear examples"], "areas_to_probe": [],
+    })
+    assert [c["score"] for c in card["criteria"]] == [5, 3]                   # 9 clamped to 5
+    assert card["overall_score"] == 4.0                                       # computed here, not by the model
+    assert "not a hiring decision" in card["note"]
+    assert summary_service.clean_scorecard({"criteria": []}) is None
+    assert summary_service.clean_scorecard(None) is None
+
+
+class FakeBothLLM:
+    def chat_json(self, messages, schema, **kw):
+        if "criteria" in schema["properties"]:
+            return {"criteria": [{"name": "Clear explanations", "score": 4, "evidence": "Explained a refund case step by step."}],
+                    "strengths": ["Concrete example"], "areas_to_probe": ["Escalation policy"]}
+        return {"overview": "o", "topics_discussed": ["t"], "stated_experience": ["e"]}
+
+
+def _interview(answers):
+    transcript = []
+    for i in range(answers):
+        transcript += [{"role": "assistant", "text": f"Question {i}"}, {"role": "candidate", "text": f"Answer {i}"}]
+    return SimpleNamespace(transcript=transcript, events=[], video_path=None, video_size_bytes=None,
+                           started_at=datetime.utcnow(), ended_at=datetime.utcnow())
+
+
+def test_scorecard_is_built_when_there_are_enough_answers(monkeypatch):
+    monkeypatch.setattr(summary_service, "get_llm", lambda: FakeBothLLM())
+    report = summary_service.build_summary(_interview(4), "Asha")
+    assert report["scorecard"]["status"] == "ready"
+    assert report["scorecard"]["overall_score"] == 4.0
+
+
+def test_scorecard_is_skipped_for_a_very_short_interview(monkeypatch):
+    monkeypatch.setattr(summary_service, "get_llm", lambda: FakeBothLLM())
+    report = summary_service.build_summary(_interview(2), "Asha")
+    assert report["scorecard"]["status"] == "skipped"
+    assert "not enough" in report["scorecard"]["reason"].lower()

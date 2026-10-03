@@ -1049,3 +1049,21 @@ audio {
   background: rgba(255, 255, 255, 0.05);
   color: var(--room-text);
 }
+
+/* ---------- post-interview report ---------- */
+.report-wrap { flex: 1; overflow-y: auto; padding: 24px 16px 96px; max-width: 860px; width: 100%; margin: 0 auto; }
+.report-title h2 { margin: 0 0 4px; }
+.report-card { background: #fff; border: 1px solid #e3e6ea; border-radius: 12px; padding: 18px 20px; margin: 14px 0; color: #1f2933; }
+.report-card h3 { margin: 0 0 10px; font-size: 1.05rem; }
+.report-block h4 { margin: 14px 0 4px; font-size: .9rem; }
+.report-card ul { margin: 6px 0; padding-left: 20px; }
+.report-muted { color: #627080; font-size: .85rem; }
+.report-head { display: flex; justify-content: space-between; align-items: center; }
+.report-overall strong { font-size: 1.8rem; }
+.report-overall span { color: #627080; margin-left: 4px; font-size: .85rem; }
+.criteria { list-style: none; padding: 0 !important; }
+.criteria li { margin-bottom: 14px; }
+.criterion-row { display: flex; justify-content: space-between; font-weight: 600; }
+.criteria p { margin: 4px 0 0; font-size: .88rem; color: #3e4c59; }
+.bar { height: 8px; background: #e8ecf0; border-radius: 4px; overflow: hidden; margin-top: 4px; }
+.bar i { display: block; height: 100%; background: #2563eb; }

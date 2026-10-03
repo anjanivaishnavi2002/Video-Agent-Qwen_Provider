@@ -123,3 +123,27 @@ summary_user: |
   Write: a short neutral overview (2-4 sentences); the topics that were discussed; the experience, skills and
   facts the candidate themselves stated; questions that were left unanswered or unclear; and topics a recruiter
   may want to explore in a follow-up (as topics, not as verdicts).
+
+# ---------------- post-interview scorecard ----------------
+scorecard_system: |
+  You prepare an advisory scorecard for a human recruiter after a screening interview. Use ONLY the transcript.
+  Choose 4 to 6 criteria that matter for the role being discussed in this interview (derive them from the
+  questions asked and the work the candidate described; do not use a generic list). Score each criterion from
+  1 to 5 where 1 = no relevant evidence or an unclear answer, 3 = partly relevant or general, and 5 = specific,
+  relevant and clearly explained. Every score MUST be backed by a short evidence note that points to something
+  the candidate actually said; if there is no evidence for a criterion, leave that criterion out.
+  Rate only the CONTENT of the answers. Never rate or comment on voice, accent, grammar caused by speech
+  recognition, appearance, emotions, confidence, honesty, personality, age or background. Do not recommend hiring
+  or rejecting. The transcript comes from speech recognition and may contain small errors.
+
+scorecard_user: |
+  Candidate: $candidate_name
+  Interview length: about $minutes minutes, $answers candidate answers.
+
+  TRANSCRIPT:
+  """
+  $transcript
+  """
+
+  Return: the criteria (name, integer score 1-5, evidence), up to 4 strengths shown by what the candidate said,
+  and up to 4 areas a recruiter may want to probe further (as topics, not verdicts).

@@ -4,6 +4,7 @@ import MicIndicator from "../components/MicIndicator";
 import InterviewerAvatar from "../components/InterviewerAvatar";
 import InterviewStatus from "../components/InterviewStatus";
 import FaceMotionDetector from "../components/FaceMotionDetector";
+import ReportPanel from "../components/ReportPanel";
 
 import useGeminiLive from "../hooks/useGeminiLive";
 import useInterviewRecorder from "../hooks/useInterviewRecorder";
@@ -12,6 +13,8 @@ import useSessionEvents from "../hooks/useSessionEvents";
 
 import {
   endInterview,
+  generateInterviewReport,
+  getInterviewReport,
   startLiveInterview,
   uploadVideo,
 } from "../services/api";
@@ -47,6 +50,8 @@ function InterviewPage({
   const [status, setStatus] = useState("starting");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [report, setReport] = useState(null);
+  const [reportState, setReportState] = useState("idle"); // idle | loading | ready | failed
   const [startedAt, setStartedAt] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(Boolean(document.fullscreenElement));
 
@@ -109,6 +114,25 @@ function InterviewPage({
         setError(err.message || "Could not save the interview recording.");
       } finally {
         setSaving(false);
+      }
+
+      // The report is written by the backend after the recording arrives: wait for it briefly,
+      // and ask for it directly if it did not start by itself.
+      if (id) {
+        setReportState("loading");
+        try {
+          let found = null;
+          for (let attempt = 0; attempt < 8 && !found; attempt += 1) {
+            const current = await getInterviewReport(id);
+            if (current && current.status && current.status !== "pending") found = current;
+            else await new Promise((resolve) => setTimeout(resolve, 3000));
+          }
+          setReport(found || (await generateInterviewReport(id)));
+          setReportState("ready");
+        } catch (reportError) {
+          console.error("Report failed:", reportError);
+          setReportState("failed");
+        }
       }
     },
     [stopRecording, flushEvents]
@@ -221,6 +245,9 @@ function InterviewPage({
         </div>
       </header>
 
+      {viewStatus === "finished" && reportState !== "idle" ? (
+        <ReportPanel state={reportState} report={report} name={candidateName} />
+      ) : (
       <main className="room-stage">
         <section
           className={`room-tile tile-ai ${viewStatus === "speaking" ? "is-speaking" : ""}`}
@@ -247,6 +274,7 @@ function InterviewPage({
           <span className="tile-label">{candidateName || "You"}</span>
         </section>
       </main>
+      )}
 
       <footer className="room-controls">
         <div className="room-controls-center">
