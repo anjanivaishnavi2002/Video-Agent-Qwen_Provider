@@ -64,9 +64,9 @@ function ResumePage({ onResumeUploaded, config, consentVersion }) {
     <div className="page lobby resume-page">
       <div className="lobby-card">
         <div className="lobby-brand">
-          <span className="room-logo">AI</span>
+          <span className="room-logo">Hello</span>
           <div>
-            <strong>AI Interview</strong>
+            <strong>Interview</strong>
             <span>Step 2 of 2 · Your details</span>
           </div>
         </div>

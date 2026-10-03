@@ -1,11 +1,2 @@
-# Add on a GPU VM (NVIDIA driver + nvidia-container-toolkit installed):
-#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile cloudsql up -d
-services:
-  ollama:
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+# Legacy local-model overlay. No longer required because the app uses Gemini/Vertex AI.
+# Keep this file as a no-op to avoid confusion while preserving compatibility with older docs.

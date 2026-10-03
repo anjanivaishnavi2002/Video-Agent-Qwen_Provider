@@ -7,7 +7,7 @@
 # IMPORTANT: change `version` whenever the wording changes. Each candidate's agreement
 # is stored with this version and a timestamp. Have your legal/HR team review the text.
 
-version: "2026-10-v1"
+version: "2026-10-v2"
 title: "Consent to an AI-assisted interview"
 intro: "Please read this carefully before you start. This screening interview is run by an AI interviewer on behalf of $organization."
 
@@ -22,6 +22,7 @@ sections:
       - "Audio of your answers and a written transcript of them"
       - "Video from your camera for the whole interview"
       - "Simple camera observations: whether your face is visible, whether more than one face is in view, and large head movements"
+      - "A written summary of your interview, prepared by AI from the transcript"
     body:
       - "We do not try to read your emotions, confidence, honesty, personality or state of mind."
 
@@ -31,7 +32,7 @@ sections:
 
   - heading: "How AI is used"
     body:
-      - "The AI asks the questions and turns your speech into text. It does not decide whether you are hired. People on the hiring team review your interview."
+      - "The AI listens to you, speaks to you, and writes the transcript and a summary of the interview. To do this, your voice, the transcript and the text of your resume are processed by Google's Gemini AI service, which works for $organization as a service provider. The AI does not decide whether you are hired. People on the hiring team review your interview."
 
   - heading: "Who can see it and how long we keep it"
     body:
@@ -44,4 +45,4 @@ sections:
 statements:
   - "I have read and understood the information above."
   - "I consent to my camera, microphone, resume and interview answers being recorded and processed as described."
-  - "I understand I am speaking with an AI interviewer and that people will review my interview."
+  - "Agree and Continue"

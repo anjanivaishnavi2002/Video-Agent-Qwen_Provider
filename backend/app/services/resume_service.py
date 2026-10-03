@@ -6,7 +6,8 @@ from pathlib import Path
 
 from app.config import settings
 from app.prompts.interviewer import load_prompts, render
-from app.providers.qwen_provider import QwenProvider
+from app.providers.gemini_provider import GeminiProvider
+from app.providers.llm_errors import LLMResponseError
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +214,7 @@ def _split_chunks(text: str, size: int) -> list[str]:
     return chunks
 
 
-def analyze_resume(text: str, llm: QwenProvider) -> dict | None:
+def analyze_resume(text: str, llm: GeminiProvider) -> dict | None:
     """
     Build a structured, grounded profile of the resume.
 
@@ -247,8 +248,10 @@ def analyze_resume(text: str, llm: QwenProvider) -> dict | None:
                 PROFILE_SCHEMA,
                 temperature=settings.RESUME_ANALYSIS_TEMPERATURE,
             )
-        except Exception:
-            logger.exception("Resume analysis failed on chunk %d/%d", i, len(chunks))
+        except LLMResponseError:
+            # The model answered but not usably: skip this chunk (the interview then relies on the
+            # raw resume text). Provider/auth/network errors are NOT swallowed - they propagate.
+            logger.exception("Resume analysis gave an unusable answer on chunk %d/%d", i, len(chunks))
             raw = None
         if raw:
             profiles.append(ground_profile(raw, chunk))

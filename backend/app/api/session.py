@@ -1,17 +1,22 @@
 import base64
+import hmac
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db.database import get_db
+from app.db.database import SessionLocal, get_db
 from app.db.models import Candidate, Interview, InterviewEvent
+from app.providers.llm_errors import LLMError
 from app.security import require_admin_or_session, require_session_token
 from app.services import session_manager, storage, voice_service
+from app.services.live_service import run_live_interview
+from app.services import summary_service
 from app.services.interview_service import InterviewSession
 
 logger = logging.getLogger(__name__)
@@ -60,6 +65,16 @@ def _live_session(db: Session, session_id: int) -> InterviewSession:
     if not session:
         raise HTTPException(status_code=404, detail="Session not found or already finished")
     return session
+
+
+def _llm_http_error(exc: LLMError) -> HTTPException:
+    """Model-layer failure -> an honest HTTP error (never a fake interviewer reply)."""
+    headers = {"Retry-After": "5"} if exc.retryable else None
+    return HTTPException(
+        status_code=exc.http_status,
+        detail=f"AI interviewer unavailable: {exc.message}",
+        headers=headers,
+    )
 
 
 def _acquire(session: InterviewSession) -> None:
@@ -116,6 +131,9 @@ def start_session(data: StartRequest, db: Session = Depends(get_db)):
 
     try:
         interview, session = session_manager.create_session(db, candidate)
+    except LLMError as exc:
+        logger.error("Could not prepare interview (LLM): %s | %s", exc.message, exc.detail)
+        raise _llm_http_error(exc) from exc
     except Exception as exc:
         logger.exception("Could not prepare interview")
         raise HTTPException(status_code=500, detail=f"Could not prepare interview: {exc}") from exc
@@ -130,6 +148,12 @@ def start_session(data: StartRequest, db: Session = Depends(get_db)):
         )
     except HTTPException:
         raise
+    except LLMError as exc:
+        logger.error("AI interviewer failed to start: %s | %s", exc.message, exc.detail)
+        session_manager.SESSIONS.pop(interview.id, None)
+        interview.status = "failed"
+        db.commit()
+        raise _llm_http_error(exc) from exc
     except Exception as exc:
         logger.exception("AI interviewer failed to start")
         session_manager.SESSIONS.pop(interview.id, None)
@@ -139,6 +163,90 @@ def start_session(data: StartRequest, db: Session = Depends(get_db)):
 
     session_manager.persist(db, interview.id, session)
     return body
+
+
+@router.post("/start-live")
+def start_live_session(data: StartRequest, db: Session = Depends(get_db)):
+    """Create a persisted interview session for the Gemini Live audio route."""
+    candidate = db.get(Candidate, data.candidate_id)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    try:
+        interview, live_session = session_manager.create_session(db, candidate)
+        snapshot = dict(interview.settings_snapshot or {})
+        snapshot["llm_model"] = settings.live_model
+        interview.settings_snapshot = snapshot
+        live_session.cfg.llm_model = settings.live_model
+        db.commit()
+    except LLMError as exc:
+        logger.error("Could not prepare live interview (LLM): %s | %s", exc.message, exc.detail)
+        raise _llm_http_error(exc) from exc
+    except Exception as exc:
+        logger.exception("Could not prepare live interview")
+        raise HTTPException(status_code=500, detail=f"Could not prepare interview: {exc}") from exc
+
+    return {
+        "status": "ok",
+        "session_id": interview.id,
+        "candidate_id": candidate.id,
+        "session_token": interview.access_token,
+    }
+
+
+@router.websocket("/{session_id}/live")
+async def live_interview(websocket: WebSocket, session_id: int):
+    """Real-time voice interview: browser audio <-> this server <-> Gemini Live (no key in the browser)."""
+    origin = websocket.headers.get("origin")
+    if origin:
+        same_origin = urlparse(origin).netloc == websocket.headers.get("host", "")
+        if not same_origin and origin not in settings.cors_origins_list:
+            await websocket.close(code=4403)
+            return
+
+    await websocket.accept()
+    db = SessionLocal()
+    interview_session = None
+    acquired = False
+    try:
+        auth = await websocket.receive_json()
+        token = auth.get("session_token") if isinstance(auth, dict) else None
+        interview = db.get(Interview, session_id)
+        if not interview or not hmac.compare_digest(interview.access_token or "", str(token or "")):
+            await websocket.send_json({"type": "error", "message": "Invalid session token"})
+            await websocket.close(code=4403)
+            return
+
+        interview_session = session_manager.get_session(db, session_id)
+        if not interview_session:
+            await websocket.send_json({"type": "error", "message": "Session not found or already finished"})
+            await websocket.close(code=4404)
+            return
+        if not interview_session.lock.acquire(blocking=False):
+            await websocket.send_json({"type": "error", "message": "Interview is already active"})
+            await websocket.close(code=4409)
+            return
+        acquired = True
+
+        await run_live_interview(websocket, db, session_id, interview_session)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        logger.exception("Live interview route failed")
+        try:
+            await websocket.send_json({"type": "error", "message": "The live interview stopped unexpectedly."})
+        except Exception:
+            pass
+    finally:
+        if interview_session and acquired:
+            if not interview_session.finished:
+                session_manager.persist(db, session_id, interview_session)
+            interview_session.lock.release()
+        db.close()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @router.post("/{session_id}/voice-answer", dependencies=[Depends(require_session_token)])
@@ -168,9 +276,12 @@ def voice_answer(
         if not candidate_text:
             return _handle_empty(db, session_id, session, silence_timeout=False)
 
-        # 3) Qwen decides the next move
+        # 3) The model decides the next move
         try:
             ai_text = session.answer(candidate_text)
+        except LLMError as exc:
+            logger.error("AI interviewer failed: %s | %s", exc.message, exc.detail)
+            raise _llm_http_error(exc) from exc
         except Exception as exc:
             logger.exception("AI interviewer failed")
             raise HTTPException(status_code=500, detail=f"AI interviewer failed: {exc}") from exc
@@ -198,6 +309,9 @@ def no_response(session_id: int, db: Session = Depends(get_db)):
 def _handle_empty(db: Session, session_id: int, session: InterviewSession, *, silence_timeout: bool) -> dict:
     try:
         text, finished = session.register_empty(silence_timeout=silence_timeout)
+    except LLMError as exc:
+        logger.error("AI interviewer failed: %s | %s", exc.message, exc.detail)
+        raise _llm_http_error(exc) from exc
     except Exception as exc:
         logger.exception("AI interviewer failed")
         raise HTTPException(status_code=500, detail=f"AI interviewer failed: {exc}") from exc
@@ -250,7 +364,12 @@ def add_events(session_id: int, data: EventsIn, db: Session = Depends(get_db)):
 # ---------------------------------------------------------
 
 @router.post("/{session_id}/video", dependencies=[Depends(require_session_token)])
-def upload_video(session_id: int, video: UploadFile = File(...), db: Session = Depends(get_db)):
+def upload_video(
+    session_id: int,
+    background: BackgroundTasks,
+    video: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
     interview = _get_interview(db, session_id)
 
     if not video.filename:
@@ -299,6 +418,8 @@ def upload_video(session_id: int, video: UploadFile = File(...), db: Session = D
     interview.video_size_bytes = written
     interview.video_uploaded_at = datetime.utcnow()
     db.commit()
+    if settings.SUMMARY_AUTO:   # the recording is the last thing the browser sends: everything is in now
+        background.add_task(summary_service.generate_summary_in_background, session_id)
     return {"session_id": session_id, "video_path": stored, "size_bytes": written}
 
 
@@ -320,6 +441,7 @@ def result(session_id: int, db: Session = Depends(get_db)):
         "transcript": interview.transcript or [],
         "video_path": interview.video_path,
         "video_size_bytes": interview.video_size_bytes,
+        "summary": interview.summary,
         "events": [
             {
                 "type": e.event_type,
@@ -330,3 +452,13 @@ def result(session_id: int, db: Session = Depends(get_db)):
             for e in interview.events
         ],
     }
+
+
+@router.post("/{session_id}/summary", dependencies=[Depends(require_admin_or_session)])
+def make_summary(session_id: int, force: bool = False, db: Session = Depends(get_db)):
+    """Factual summary of the interview + the observable recording events. `?force=true` regenerates it."""
+    _get_interview(db, session_id)
+    try:
+        return summary_service.generate_summary(db, session_id, force=force)
+    except LLMError as exc:        # not expected (build_summary catches them) - kept for safety
+        raise _llm_http_error(exc) from exc

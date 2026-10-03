@@ -38,6 +38,7 @@ _ADDED_COLUMNS = {
         "ended_at": "TIMESTAMP",
         "video_size_bytes": "INTEGER",
         "video_uploaded_at": "TIMESTAMP",
+        "summary": "JSON",
     },
 }
 

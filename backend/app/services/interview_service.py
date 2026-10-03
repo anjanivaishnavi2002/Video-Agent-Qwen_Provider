@@ -15,7 +15,8 @@ from datetime import datetime
 
 from app.config import settings
 from app.prompts.interviewer import build_system_prompt, load_prompts, render
-from app.providers.qwen_provider import QwenProvider, get_llm, parse_json_loosely
+from app.providers.gemini_provider import GeminiProvider, get_llm
+from app.providers.llm_errors import LLMResponseError
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ class InterviewSettings:
             max_learned_facts=settings.MAX_LEARNED_FACTS,
             max_empty_streak=settings.MAX_EMPTY_STREAK,
             empty_before_reprompt=settings.EMPTY_BEFORE_REPROMPT,
-            llm_model=settings.LLM_MODEL,
+            llm_model=settings.active_model,
             temperature=settings.LLM_TEMPERATURE,
         )
 
@@ -89,7 +90,7 @@ class InterviewSession:
         resume_profile: dict | None,
         resume_text: str | None,
         *,
-        llm: QwenProvider | None = None,
+        llm: GeminiProvider | None = None,
         transcript: list[dict] | None = None,
         started_at: datetime | None = None,
     ):
@@ -193,23 +194,33 @@ class InterviewSession:
     # LLM call
     # ------------------------------------------------------------------
     def _generate(self, user_content: str, *, allow_end: bool = True) -> dict:
+        """
+        Ask the model for the next interviewer turn (structured JSON, TURN_SCHEMA).
+
+        Provider failures propagate as LLMError - there is deliberately no fallback
+        text, so an outage can never be mistaken for something the interviewer said.
+        """
         messages = self._build_messages(user_content)
-        raw = self.llm.chat(messages, schema=TURN_SCHEMA)
-        data = parse_json_loosely(raw)
+        data: dict | None = None
+        for _ in range(2):  # one extra try if the model returns an empty spoken line
+            data = self.llm.chat_json(messages, TURN_SCHEMA)
+            if str(data.get("spoken_text", "")).strip():
+                break
+            logger.warning("Interviewer returned an empty spoken_text; retrying once.")
+            data = None
+        if data is None:
+            raise LLMResponseError("The model returned an empty interviewer line.")
 
-        if not data or not str(data.get("spoken_text", "")).strip():
-            # Model ignored the format: treat plain text as the spoken line.
-            logger.warning("Interviewer reply was not valid JSON; using raw text.")
-            data = {
-                "learned": "",
-                "topic": "",
-                "move": "follow_up",
-                "end_interview": False,
-                "spoken_text": raw.strip(),
-            }
-
-        data["spoken_text"] = str(data["spoken_text"]).strip()
-        data["end_interview"] = bool(data.get("end_interview")) and allow_end
+        move = str(data.get("move", "")).strip()
+        if move not in TURN_SCHEMA["properties"]["move"]["enum"]:
+            move = "follow_up"   # bookkeeping label only; the spoken text is untouched
+        data = {
+            "learned": str(data.get("learned", "")).strip(),
+            "topic": str(data.get("topic", "")).strip(),
+            "move": move,
+            "end_interview": bool(data.get("end_interview")) and allow_end,
+            "spoken_text": str(data["spoken_text"]).strip(),
+        }
         return data
 
     def _commit_ai_turn(self, data: dict) -> str:

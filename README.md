@@ -1,15 +1,16 @@
 
 # AI Video Interview Agent (BPO)
 
-A hands-free, voice-based AI interviewer. The candidate enters a name and uploads a resume;
-the interviewer (Qwen 2.5 via Ollama) speaks (Piper), listens (browser silence detection), transcribes
-(Faster-Whisper) and decides every next question from the **resume + conversation + BPO context**.
-There are no fixed questions and no job selection. The camera + microphone are recorded for the whole
-interview and observable face events (missing / returned / multiple faces / head movement) are logged.
+A hands-free, real-time voice interviewer. The candidate enters a name and uploads a resume;
+the browser streams microphone audio through the backend to Gemini Live (`gemini-3.8-live`), which
+listens, decides every next question, and speaks native audio from the
+**resume + conversation + BPO context**. There are no fixed questions and no job selection. The camera +
+microphone are recorded for the whole interview and observable face events (missing / returned / multiple
+faces / head movement) are logged.
 
 ```
-Browser ──HTTPS──► web (Caddy: React app, /api proxy, Let's Encrypt)
-                      └──► backend (FastAPI + Whisper + Piper) ──► ollama (Qwen 2.5)
+Browser ──HTTPS/WSS──► web (Caddy: React app, /api proxy, Let's Encrypt)
+                           └──► backend (FastAPI) ──► Gemini Live (`gemini-3.8-live`)
                                   ├──► Cloud SQL (PostgreSQL)   via cloudsql-proxy
                                   └──► Cloud Storage (resumes, recordings)
 ```
@@ -20,9 +21,9 @@ Browser ──HTTPS──► web (Caddy: React app, /api proxy, Let's Encrypt)
 |---|---|
 | `backend/` | FastAPI app (`app/`), tests, `Dockerfile` |
 | `frontend/` | React + Vite app, `Dockerfile`, `Caddyfile` |
-| `docker-compose.yml` | Production stack for one VM (`web`, `backend`, `ollama`, `cloudsql-proxy`) |
+| `docker-compose.yml` | Production stack for one VM (`web`, `backend`, `cloudsql-proxy`) |
 | `docker-compose.local.yml` | Overlay: local Postgres, port 8080 – try everything without GCP |
-| `docker-compose.gpu.yml` | Overlay: NVIDIA GPU for Ollama |
+| `docker-compose.gpu.yml` | Legacy GPU overlay; Gemini does not require a local model container |
 | `infra/gcp/` | `setup.sh` (one-time GCP provisioning), `vm-startup.sh` |
 | `.github/workflows/` | `ci.yml` (tests on PRs), `deploy.yml` (build → Artifact Registry → VM) |
 | `.env.example` | Deployment settings. `backend/.env.example` lists every tunable (interview length, silence timeout, tone, models…) |
@@ -37,9 +38,7 @@ Interview behaviour is data, not code: edit `backend/app/prompts/interviewer.yam
 cd backend
 python -m venv .venv && source .venv/bin/activate        # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
-python scripts/download_piper_voice.py en_US-lessac-medium voices
-cp .env.example .env                                     # set DATABASE_URL
-ollama pull qwen2.5:3b-instruct
+cp .env.example .env                                     # set DATABASE_URL and GEMINI_API_KEY
 uvicorn app.main:app --reload --port 8000
 
 # frontend (second terminal)
@@ -52,7 +51,6 @@ Tests: `cd backend && python -m pytest tests -q` and `cd frontend && npm run lin
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
-# wait until the one-shot `ollama-pull` container has exited (it downloads the Qwen model)
 # open http://localhost:8080   ·   health: http://localhost:8080/api/health
 ```
 
@@ -78,12 +76,12 @@ sudo docker compose logs -f backend
 ```
 
 ### Why a VM and not Cloud Run
-Whisper, Piper and Qwen need CPU/GPU and local model files, interviews are long-lived streams of requests, and live sessions are held in the backend's
-memory. A VM running compose is the simplest thing that works. Run **one backend replica**.
+Interviews use long-lived WebSocket connections and live sessions are held in backend memory. A VM
+running compose is the simplest thing that works. Run **one backend replica**.
 
 ## 4. Security model
 
-* Starting an interview returns a random **session token**; the browser sends it as `X-Session-Token` on every later call. Without it all session endpoints return 403.
+* Starting an interview returns a random **session token**; the browser sends it as `X-Session-Token` on REST calls and as its first WebSocket message for Gemini Live. Without it session access is rejected.
 * Recruiters read results with `X-API-Key: $ADMIN_API_KEY` → `GET /api/session/<id>/result`.
 * Raw `/voice/stt` and `/voice/tts` are disabled in production (`ENABLE_DEBUG_ENDPOINTS=false`).
 * Resumes and recordings go to a private Cloud Storage bucket (public access prevention on); the VM's service account is the only credential.
@@ -91,9 +89,9 @@ memory. A VM running compose is the simplest thing that works. Run **one backend
 
 ## 5. Known limitations
 
-* Not load-tested. CPU-only Qwen + Whisper is slow (several seconds per reply); use a GPU VM for real traffic.
+* Not load-tested. Gemini Live requires a valid Gemini API key and an available `gemini-3.8-live` model in your account/region.
 * Live sessions are in memory (restored from the DB after a restart); do not run more than one backend replica.
-* Recording uploads once at the end of the interview; a closed tab loses it. The AI's voice is not in the recording.
+* Recording uploads once at the end of the interview; a closed tab loses it. The camera recording contains the candidate's microphone audio; Gemini's returned audio is not mixed into it.
 * Face monitoring downloads its model from Google at page load (or host it yourself: `FACE_MODEL_URL`).
 * The candidate-facing endpoints (`/resume/upload`, `/session/start`) are unauthenticated and not rate limited.
 =======

@@ -1,0 +1,39 @@
+# Render Blueprint: backend API + PostgreSQL. The React app is deployed on Netlify (see netlify.toml).
+databases:
+  - name: video-agent-db
+    plan: free
+    databaseName: video_agent
+    user: video_agent
+
+services:
+  - type: web
+    name: video-agent-api
+    runtime: python
+    rootDir: backend
+    plan: free                      # use "starter" for a real demo: free instances sleep after 15 min idle
+    buildCommand: pip install -r requirements-render.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips=*
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: DATABASE_URL
+        fromDatabase:
+          name: video-agent-db
+          property: connectionString
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false                 # paste it in the Render dashboard - never commit it
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+      - key: GEMINI_LIVE_MODEL
+        value: gemini-3.8-live
+      - key: CORS_ORIGINS
+        sync: false                 # your Netlify URL, e.g. https://your-site.netlify.app
+      - key: ADMIN_API_KEY
+        generateValue: true
+      - key: STORAGE_BACKEND
+        value: local                # Render's disk is ephemeral on free/starter; see DEPLOY.md
+      - key: PRELOAD_MODELS
+        value: "false"

@@ -42,6 +42,7 @@ class Interview(Base):
     video_path = Column(String)
     video_size_bytes = Column(Integer)
     video_uploaded_at = Column(DateTime)
+    summary = Column(JSON)                      # factual summary + recording/face-event report (see summary_service)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 

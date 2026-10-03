@@ -30,7 +30,8 @@ PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(project
 
 echo "== APIs"
 gcloud services enable compute.googleapis.com sqladmin.googleapis.com artifactregistry.googleapis.com \
-  iamcredentials.googleapis.com iap.googleapis.com servicenetworking.googleapis.com storage.googleapis.com
+  iamcredentials.googleapis.com iap.googleapis.com servicenetworking.googleapis.com storage.googleapis.com \
+  aiplatform.googleapis.com
 
 echo "== Artifact Registry"
 gcloud artifacts repositories describe "$AR_REPO" --location "$REGION" >/dev/null 2>&1 || \
@@ -47,7 +48,7 @@ gcloud iam service-accounts describe "$VM_SA@$PROJECT_ID.iam.gserviceaccount.com
 gcloud iam service-accounts describe "$DEPLOY_SA@$PROJECT_ID.iam.gserviceaccount.com" >/dev/null 2>&1 || \
   gcloud iam service-accounts create "$DEPLOY_SA" --display-name "Video Agent GitHub deploy"
 
-for role in roles/cloudsql.client roles/artifactregistry.reader roles/logging.logWriter roles/monitoring.metricWriter; do
+for role in roles/cloudsql.client roles/artifactregistry.reader roles/logging.logWriter roles/monitoring.metricWriter roles/aiplatform.user; do
   gcloud projects add-iam-policy-binding "$PROJECT_ID" --member "serviceAccount:$VM_SA@$PROJECT_ID.iam.gserviceaccount.com" --role "$role" --condition=None >/dev/null
 done
 gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
@@ -136,7 +137,11 @@ cat <<OUT
      GCS_BUCKET=${BUCKET}
      ADMIN_API_KEY=$(openssl rand -hex 24)
      CORS_ORIGINS=https://${DOMAIN:-interview.example.com}
-     LLM_MODEL=qwen2.5:3b-instruct
+     LLM_PROVIDER=vertex
+     VERTEX_PROJECT_ID=${PROJECT_ID}
+     VERTEX_LOCATION=global
+     VERTEX_MODEL=gemini-3.8-flash
+     VERTEX_LIVE_MODEL=gemini-3.8-live
    (gcloud compute ssh ${VM_NAME} --zone ${ZONE} --tunnel-through-iap)
 
 4) Push to main -> GitHub Actions builds, pushes and deploys.

@@ -122,6 +122,59 @@ export async function startInterview(candidateId) {
   return { sessionId: data.session_id, ...parseSpokenReply(data) };
 }
 
+export async function startLiveInterview(candidateId) {
+  const response = await request(
+    "/session/start-live",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ candidate_id: candidateId }),
+    },
+    "Could not start interview"
+  );
+  const data = await response.json();
+  sessionToken = data.session_token;
+  return { sessionId: data.session_id };
+}
+
+export function connectLiveInterview(sessionId, onEvent) {
+  const socketUrl = new URL(API_BASE_URL, window.location.href);
+  socketUrl.protocol = socketUrl.protocol === "https:" ? "wss:" : "ws:";
+  socketUrl.pathname = `${socketUrl.pathname.replace(/\/$/, "")}/session/${sessionId}/live`;
+  const socket = new WebSocket(socketUrl);
+
+  return new Promise((resolve, reject) => {
+    let ready = false;
+    socket.onopen = () => {
+      socket.send(JSON.stringify({ session_token: sessionToken }));
+    };
+    socket.onmessage = (message) => {
+      let event;
+      try {
+        event = JSON.parse(message.data);
+      } catch {
+        return;
+      }
+      onEvent?.(event);
+      if (event.type === "ready" && !ready) {
+        ready = true;
+        resolve({
+          sendAudio: (pcm) => socket.readyState === WebSocket.OPEN && socket.send(pcm),
+          close: () => socket.close(),
+        });
+      } else if (event.type === "error" && !ready) {
+        reject(new Error(event.message || "Could not connect to Gemini Live."));
+      }
+    };
+    socket.onerror = () => {
+      if (!ready) reject(new Error("Could not connect to Gemini Live."));
+    };
+    socket.onclose = (event) => {
+      if (!ready) reject(new Error(`Gemini Live connection closed (${event.code}).`));
+    };
+  });
+}
+
 // `audioBlob` is a WAV of one complete answer (recorded hands-free).
 export async function sendVoiceAnswer(sessionId, audioBlob) {
   const formData = new FormData();

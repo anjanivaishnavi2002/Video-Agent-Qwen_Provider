@@ -56,23 +56,40 @@ def root():
 
 @app.get("/healthz")
 def healthz():
-    """Cheap liveness probe for Docker / load balancers (does not touch Ollama)."""
+    """Cheap liveness probe for Docker / load balancers (does not call the LLM)."""
     return {"status": "ok"}
 
 
 @app.get("/health")
-def health():
-    """Quick diagnosis: is the backend up, and can it reach Ollama and find the model?"""
-    result = {"status": "ok", "llm_model": settings.LLM_MODEL, "ollama_host": settings.OLLAMA_HOST}
-    try:
-        from ollama import Client
+def health(deep: bool = False):
+    """
+    Which LLM back end is configured, and is it usable?
 
-        listed = Client(host=settings.OLLAMA_HOST, timeout=5).list()
-        names = [m.get("model") or m.get("name") for m in (listed.get("models") if isinstance(listed, dict) else listed.models)]
-        result["ollama"] = "reachable"
-        result["model_installed"] = settings.LLM_MODEL in names
-        result["installed_models"] = names
-    except Exception as exc:
-        result["status"] = "ollama_unreachable"
-        result["ollama"] = f"{type(exc).__name__}: {exc}"
+    Plain call: configuration only (no cost). `?deep=true`: also makes one tiny real model call,
+    which proves the credentials, project/location, model id and network path end to end.
+    """
+    provider = settings.LLM_PROVIDER.strip().lower()
+    result: dict = {
+        "status": "ok",
+        "llm_provider": provider,
+        "llm_model": settings.active_model,
+        "live_model": settings.GEMINI_LIVE_MODEL,
+    }
+    if provider == "vertex":
+        result["vertex_project"] = settings.VERTEX_PROJECT_ID or None
+        result["vertex_location"] = settings.VERTEX_LOCATION
+        result["configured"] = bool(settings.VERTEX_PROJECT_ID)   # auth = the VM's service account
+    else:
+        result["configured"] = bool(settings.GEMINI_API_KEY)      # the key itself is never returned
+    if not result["configured"]:
+        result["status"] = "llm_not_configured"
+    elif deep:
+        from app.providers.gemini_provider import get_llm
+        from app.providers.llm_errors import LLMError
+
+        try:
+            result["llm_check"] = get_llm().ping()
+        except LLMError as exc:
+            result["status"] = exc.code
+            result["llm_check"] = {"ok": False, "error": exc.message}
     return result

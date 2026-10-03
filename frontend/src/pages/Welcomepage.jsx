@@ -24,14 +24,14 @@ function Welcomepage({ onStart, config }) {
     <div className="page lobby">
       <div className="lobby-card lobby-wide">
         <div className="lobby-brand">
-          <span className="room-logo">AI</span>
+          <span className="room-logo">Hello</span>
           <div>
-            <strong>AI Interview</strong>
+            <strong>Interview</strong>
             <span>{config.interview_type}</span>
           </div>
         </div>
 
-        <h1>Meet {config.interviewer_name}, your AI interviewer</h1>
+        <h1>Meet {config.interviewer_name}, your interviewer</h1>
 
         <p className="lobby-lead">
           Have a natural conversation about your experience. Your interviewer
