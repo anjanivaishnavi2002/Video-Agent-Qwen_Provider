@@ -1,0 +1,2 @@
+# Lets Render install the backend from the repo root (default build command).
+-r backend/requirements-render.txt
