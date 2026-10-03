@@ -1,19 +1,20 @@
-
 # AI Video Interview Agent (BPO)
 
-A hands-free, real-time voice interviewer. The candidate enters a name and uploads a resume;
-the browser streams microphone audio through the backend to Gemini Live (`gemini-3.8-live`), which
-listens, decides every next question, and speaks native audio from the
-**resume + conversation + BPO context**. There are no fixed questions and no job selection. The camera +
-microphone are recorded for the whole interview and observable face events (missing / returned / multiple
-faces / head movement) are logged.
+A hands-free voice interviewer that runs **fully self-hosted**. The candidate enters a name and uploads a resume.
+The interviewer (Alex) then asks questions generated from the **resume + conversation + BPO context**; there are no
+fixed questions. Each turn: the browser detects when the candidate stops speaking, the backend transcribes it
+(Faster-Whisper), Qwen (served by Ollama) decides the next question, and Piper speaks it. The camera and microphone are
+recorded for the whole interview and observable face events (missing / returned / multiple faces / head movement)
+are logged. After the interview a summary and an advisory scorecard are produced.
 
 ```
-Browser ──HTTPS/WSS──► web (Caddy: React app, /api proxy, Let's Encrypt)
-                           └──► backend (FastAPI) ──► Gemini Live (`gemini-3.8-live`)
-                                  ├──► Cloud SQL (PostgreSQL)   via cloudsql-proxy
-                                  └──► Cloud Storage (resumes, recordings)
+Browser --HTTPS--> web (Caddy: React app, /api proxy, automatic HTTPS)
+                      └--> backend (FastAPI + Faster-Whisper + Piper) --> ollama (Qwen 2.5)
+                              ├--> PostgreSQL (container, or Cloud SQL via cloudsql-proxy)
+                              └--> local disk (or a Cloud Storage bucket) for resumes and recordings
 ```
+
+No audio, transcript or resume text is sent to any outside AI service.
 
 ## Repository layout
 
@@ -21,12 +22,14 @@ Browser ──HTTPS/WSS──► web (Caddy: React app, /api proxy, Let's Encryp
 |---|---|
 | `backend/` | FastAPI app (`app/`), tests, `Dockerfile` |
 | `frontend/` | React + Vite app, `Dockerfile`, `Caddyfile` |
-| `docker-compose.yml` | Production stack for one VM (`web`, `backend`, `cloudsql-proxy`) |
-| `docker-compose.local.yml` | Overlay: local Postgres, port 8080 – try everything without GCP |
-| `docker-compose.gpu.yml` | Legacy GPU overlay; Gemini does not require a local model container |
+| `docker-compose.yml` | Production stack for one VM (`web`, `backend`, `ollama`, `ollama-pull`, `cloudsql-proxy`) |
+| `docker-compose.poc.yml` | Overlay: PostgreSQL container + local disk (single-VM proof of concept) |
+| `docker-compose.local.yml` | Overlay: local Postgres, port 8080, to try everything on your own machine |
+| `docker-compose.gpu.yml` | Overlay for a GPU VM (faster replies) |
+| `DEPLOY_GCP.md` | Step-by-step deployment on the Compute Engine VM |
 | `infra/gcp/` | `setup.sh` (one-time GCP provisioning), `vm-startup.sh` |
-| `.github/workflows/` | `ci.yml` (tests on PRs), `deploy.yml` (build → Artifact Registry → VM) |
-| `.env.example` | Deployment settings. `backend/.env.example` lists every tunable (interview length, silence timeout, tone, models…) |
+| `.github/workflows/` | `ci.yml` (tests), `deploy.yml` (build, push to Artifact Registry, deploy to the VM) |
+| `.env.example` | Deployment settings. `backend/.env.example` lists every tunable (interview length, silence timeout, tone, model...) |
 
 Interview behaviour is data, not code: edit `backend/app/prompts/interviewer.yaml` (how to interview) and
 `backend/app/prompts/bpo_context.yaml` (BPO guidance). Everything else is an environment variable.
@@ -34,11 +37,14 @@ Interview behaviour is data, not code: edit `backend/app/prompts/interviewer.yam
 ## 1. Run locally without Docker (development)
 
 ```bash
+# Ollama: install it from ollama.com, then
+ollama pull qwen2.5:3b-instruct
+
 # backend
 cd backend
 python -m venv .venv && source .venv/bin/activate        # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
-cp .env.example .env                                     # set DATABASE_URL and GEMINI_API_KEY
+cp .env.example .env                                     # set DATABASE_URL
 uvicorn app.main:app --reload --port 8000
 
 # frontend (second terminal)
@@ -51,49 +57,26 @@ Tests: `cd backend && python -m pytest tests -q` and `cd frontend && npm run lin
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
-# open http://localhost:8080   ·   health: http://localhost:8080/api/health
+# open http://localhost:8080   -   health: http://localhost:8080/api/health?deep=true
 ```
 
-## 3. Deploy to GCP (Compute Engine VM)
+## 3. Deploy to GCP
 
-One-time:
-
-1. Push this repo to GitHub.
-2. `export PROJECT_ID=... GITHUB_REPO=owner/name DOMAIN=interview.example.com` and run `bash infra/gcp/setup.sh`
-   (review it first – it creates billable resources: VM, Cloud SQL, bucket, Artifact Registry, service accounts,
-   Workload Identity Federation for GitHub). For a GPU VM: `MACHINE_TYPE=g2-standard-8 GPU=nvidia-l4`.
-3. Follow the printed instructions: DNS A record, GitHub secrets/variables, and the VM's `/opt/video-agent/.env`.
-
-Every deploy afterwards: **push/merge to `main`** → tests → images built and pushed to Artifact Registry →
-VM pulls and restarts → smoke test on `/api/healthz`.
-
-Manual deploy on the VM:
-
-```bash
-cd /opt/video-agent
-sudo docker compose --profile cloudsql pull && sudo docker compose --profile cloudsql up -d
-sudo docker compose logs -f backend
-```
-
-### Why a VM and not Cloud Run
-Interviews use long-lived WebSocket connections and live sessions are held in backend memory. A VM
-running compose is the simplest thing that works. Run **one backend replica**.
+See `DEPLOY_GCP.md` (single VM proof of concept). For the full setup with Cloud SQL, a bucket and GitHub Actions
+deploys, use `infra/gcp/setup.sh` and `.github/workflows/deploy.yml`. Run **one backend replica** (interview sessions
+are held in memory and restored from the database after a restart).
 
 ## 4. Security model
 
-* Starting an interview returns a random **session token**; the browser sends it as `X-Session-Token` on REST calls and as its first WebSocket message for Gemini Live. Without it session access is rejected.
-* Recruiters read results with `X-API-Key: $ADMIN_API_KEY` → `GET /api/session/<id>/result`.
+* Starting an interview returns a random **session token**; the browser sends it as `X-Session-Token` on REST calls.
+* Recruiters read results with `X-API-Key: $ADMIN_API_KEY` -> `GET /api/session/<id>/result`.
 * Raw `/voice/stt` and `/voice/tts` are disabled in production (`ENABLE_DEBUG_ENDPOINTS=false`).
-* Resumes and recordings go to a private Cloud Storage bucket (public access prevention on); the VM's service account is the only credential.
-* Secrets live in `/opt/video-agent/.env` on the VM, never in git. Candidate consent, data retention and privacy-law compliance (video + voice + CV are personal data) are **your responsibility** – add a consent screen and retention policy before real candidates use this.
+* Secrets live in the VM's `.env`, never in git. Consent, data retention and privacy-law compliance (video + voice + CV are personal data) are **your responsibility**: have legal/HR review the consent text and set a retention policy before real candidates use this.
 
 ## 5. Known limitations
 
-* Not load-tested. Gemini Live requires a valid Gemini API key and an available `gemini-3.8-live` model in your account/region.
-* Live sessions are in memory (restored from the DB after a restart); do not run more than one backend replica.
-* Recording uploads once at the end of the interview; a closed tab loses it. The camera recording contains the candidate's microphone audio; Gemini's returned audio is not mixed into it.
-* Face monitoring downloads its model from Google at page load (or host it yourself: `FACE_MODEL_URL`).
+* Not load-tested. On a CPU-only VM each reply takes a few seconds; use a GPU VM for faster replies.
+* A 3B model gives simpler questions and rougher scorecards than a large model; try a larger Qwen if quality matters.
+* Recording uploads once at the end of the interview; a closed tab loses it.
+* Face monitoring downloads its MediaPipe model from a Google-hosted URL at page load (or host it yourself: `FACE_MODEL_URL`).
 * The candidate-facing endpoints (`/resume/upload`, `/session/start`) are unauthenticated and not rate limited.
-=======
-# Video_Agent-
->>>>>>> origin/main

@@ -1,0 +1,27 @@
+# Single-VM proof of concept: adds a PostgreSQL container (no Cloud SQL needed) and keeps files on the VM disk.
+#   docker compose -f docker-compose.yml -f docker-compose.poc.yml up -d --build
+# Needs POSTGRES_PASSWORD in .env (letters and digits only, so it is safe inside the database URL).
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: video_agent
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d video_agent"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/video_agent
+      STORAGE_BACKEND: local
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pg_data:

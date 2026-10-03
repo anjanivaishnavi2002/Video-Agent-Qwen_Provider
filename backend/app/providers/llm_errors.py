@@ -27,13 +27,13 @@ class LLMError(Exception):
 
 
 class LLMConfigError(LLMError):
-    """Missing/invalid settings (no API key, no project, unknown provider ...)."""
+    """Missing/invalid settings (no Ollama host, no model name ...)."""
     http_status = 503
     code = "llm_not_configured"
 
 
 class LLMAuthError(LLMError):
-    """Bad API key, or the VM's service account may not call Vertex AI."""
+    """The model server refused the request."""
     http_status = 503
     code = "llm_auth_failed"
 
@@ -63,7 +63,7 @@ class LLMConnectionError(LLMError):
 
 
 class LLMUnavailableError(LLMError):
-    """Google-side 5xx / overloaded."""
+    """Model server 5xx / overloaded."""
     http_status = 503
     retryable = True
     code = "llm_unavailable"

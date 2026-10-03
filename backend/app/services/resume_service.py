@@ -6,7 +6,7 @@ from pathlib import Path
 
 from app.config import settings
 from app.prompts.interviewer import load_prompts, render
-from app.providers.gemini_provider import GeminiProvider
+from app.providers.ollama_provider import OllamaProvider
 from app.providers.llm_errors import LLMResponseError
 
 logger = logging.getLogger(__name__)
@@ -214,7 +214,7 @@ def _split_chunks(text: str, size: int) -> list[str]:
     return chunks
 
 
-def analyze_resume(text: str, llm: GeminiProvider) -> dict | None:
+def analyze_resume(text: str, llm: OllamaProvider) -> dict | None:
     """
     Build a structured, grounded profile of the resume.
 

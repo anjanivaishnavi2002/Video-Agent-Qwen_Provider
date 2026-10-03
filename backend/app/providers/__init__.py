@@ -1,1 +1,1 @@
-"""LLM access (Gemini API / Vertex AI Gemini)."""
+"""LLM access (Qwen through Ollama)."""

@@ -1,7 +1,10 @@
 # Production stack for ONE Compute Engine VM.
 #   web      Caddy: React app + HTTPS + /api proxy
-#   backend  FastAPI + Faster-Whisper + Piper; calls Gemini on Vertex AI (no model container needed)
+#   backend  FastAPI + Faster-Whisper (speech-to-text) + Piper (text-to-speech)
+#   ollama   Qwen 2.5 served locally (add docker-compose.gpu.yml on a GPU VM)
 #   cloudsql-proxy   secure tunnel to Cloud SQL (profile "cloudsql")
+#
+# AI = self-hosted Qwen (Ollama) + Whisper + Piper, turn-based voice. Nothing leaves your VM.
 #
 # Production:  docker compose --profile cloudsql up -d
 # Local test:  docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
@@ -36,15 +39,42 @@ services:
       - path: .env
         required: false
     environment:
-      # Production talks to Vertex AI with the VM's service account (Application Default
-      # Credentials) - no API key. VERTEX_PROJECT_ID / VERTEX_LOCATION / VERTEX_MODEL come from .env.
-      LLM_PROVIDER: ${LLM_PROVIDER:-vertex}
+      OLLAMA_HOST: http://ollama:11434
       ENABLE_DEBUG_ENDPOINTS: "false"
     volumes:
       - backend_data:/data
+    depends_on:
+      ollama:
+        condition: service_healthy
     expose:
       - "8000"
     restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_NUM_PARALLEL: "1"        # one interview turn at a time per model copy: keeps RAM predictable on a CPU VM
+      OLLAMA_MAX_LOADED_MODELS: "1"
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  # One-shot job: downloads the model named in OLLAMA_MODEL (first start only), then exits.
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c", "ollama pull ${OLLAMA_MODEL:-qwen2.5:3b-instruct}"]
+    restart: "no"
 
   cloudsql-proxy:
     profiles: ["cloudsql"]
@@ -57,3 +87,4 @@ volumes:
   caddy_data:
   caddy_config:
   backend_data:
+  ollama_models:

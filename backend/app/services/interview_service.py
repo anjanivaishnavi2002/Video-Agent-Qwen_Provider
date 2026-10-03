@@ -15,7 +15,7 @@ from datetime import datetime
 
 from app.config import settings
 from app.prompts.interviewer import build_system_prompt, load_prompts, render
-from app.providers.gemini_provider import GeminiProvider, get_llm
+from app.providers.ollama_provider import OllamaProvider, get_llm
 from app.providers.llm_errors import LLMResponseError
 
 logger = logging.getLogger(__name__)
@@ -90,7 +90,7 @@ class InterviewSession:
         resume_profile: dict | None,
         resume_text: str | None,
         *,
-        llm: GeminiProvider | None = None,
+        llm: OllamaProvider | None = None,
         transcript: list[dict] | None = None,
         started_at: datetime | None = None,
     ):

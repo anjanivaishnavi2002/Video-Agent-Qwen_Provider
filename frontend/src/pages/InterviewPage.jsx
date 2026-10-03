@@ -6,18 +6,23 @@ import InterviewStatus from "../components/InterviewStatus";
 import FaceMotionDetector from "../components/FaceMotionDetector";
 import ReportPanel from "../components/ReportPanel";
 
-import useGeminiLive from "../hooks/useGeminiLive";
+import useAutoListen from "../hooks/useAutoListen";
 import useInterviewRecorder from "../hooks/useInterviewRecorder";
 import useMediaStream from "../hooks/useMediaStream";
 import useSessionEvents from "../hooks/useSessionEvents";
 
 import {
   endInterview,
-  generateInterviewReport,
-  getInterviewReport,
-  startLiveInterview,
+  sendNoResponse,
+  sendVoiceAnswer,
+  startInterview,
   uploadVideo,
+  waitForInterviewReport,
 } from "../services/api";
+
+// Turn errors are recoverable (the candidate simply keeps talking) until
+// they repeat this many times in a row.
+const MAX_CONSECUTIVE_FAILURES = 3;
 
 function formatClock(totalSeconds) {
   const m = Math.floor(totalSeconds / 60);
@@ -39,6 +44,7 @@ function Timer({ startedAt, running }) {
   return <span className="room-timer">{formatClock(seconds)}</span>;
 }
 
+// Turn-based voice (LLM_PROVIDER=ollama): the candidate speaks, Whisper transcribes, Qwen answers, Piper speaks.
 function InterviewPage({
   candidateId,
   candidateName,
@@ -55,10 +61,11 @@ function InterviewPage({
   const [startedAt, setStartedAt] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(Boolean(document.fullscreenElement));
 
+  const audioRef = useRef(null);
   const startedRef = useRef(false);
   const sessionRef = useRef(null);
-  const liveDisconnectRef = useRef(null);
   const finishedRef = useRef(false);
+  const failuresRef = useRef(0);
 
   // One camera + microphone stream shared by face monitor, listener and recorder.
   const { stream, error: mediaError } = useMediaStream();
@@ -86,12 +93,48 @@ function InterviewPage({
     [pushEvent, offsetMs]
   );
 
+  // Plays a blob and RESOLVES ONLY WHEN THE AUDIO HAS FINISHED, so the
+  // microphone never starts while the AI is still talking.
+  const playBlob = useCallback((blob) => {
+    return new Promise((resolve, reject) => {
+      const audio = audioRef.current;
+
+      if (!audio) {
+        resolve();
+        return;
+      }
+
+      const url = URL.createObjectURL(blob);
+
+      const cleanup = () => {
+        URL.revokeObjectURL(url);
+        audio.onended = null;
+        audio.onerror = null;
+      };
+
+      audio.onended = () => {
+        cleanup();
+        resolve();
+      };
+
+      audio.onerror = () => {
+        cleanup();
+        reject(new Error("Could not play AI voice"));
+      };
+
+      audio.src = url;
+      audio.play().catch((err) => {
+        cleanup();
+        reject(err);
+      });
+    });
+  }, []);
+
   // Stop the recording, save monitoring events and upload the video.
   const finishInterview = useCallback(
     async ({ userEnded }) => {
       if (finishedRef.current) return;
       finishedRef.current = true;
-      liveDisconnectRef.current?.();
 
       setStatus("finished");
       setSaving(true);
@@ -116,18 +159,11 @@ function InterviewPage({
         setSaving(false);
       }
 
-      // The report is written by the backend after the recording arrives: wait for it briefly,
-      // and ask for it directly if it did not start by itself.
+      // The summary + scorecard are written by the backend after the recording arrives.
       if (id) {
         setReportState("loading");
         try {
-          let found = null;
-          for (let attempt = 0; attempt < 8 && !found; attempt += 1) {
-            const current = await getInterviewReport(id);
-            if (current && current.status && current.status !== "pending") found = current;
-            else await new Promise((resolve) => setTimeout(resolve, 3000));
-          }
-          setReport(found || (await generateInterviewReport(id)));
+          setReport(await waitForInterviewReport(id));
           setReportState("ready");
         } catch (reportError) {
           console.error("Report failed:", reportError);
@@ -137,6 +173,37 @@ function InterviewPage({
     },
     [stopRecording, flushEvents]
   );
+
+  // Speak the interviewer's reply, then either finish or listen again.
+  const deliverReply = useCallback(
+    async (reply) => {
+      if (reply.audio) {
+        setStatus("speaking");
+        await playBlob(reply.audio);
+      }
+
+      if (reply.finished) {
+        await finishInterview({ userEnded: false });
+      } else {
+        setStatus("listening");
+      }
+    },
+    [playBlob, finishInterview]
+  );
+
+  const handleTurnError = useCallback((err) => {
+    console.error("Interview turn failed:", err);
+
+    failuresRef.current += 1;
+    const message = err.message || "Something went wrong.";
+    setError(message);
+
+    const fatal =
+      /session not found/i.test(message) ||
+      failuresRef.current >= MAX_CONSECUTIVE_FAILURES;
+
+    setStatus(fatal ? "error" : "listening");
+  }, []);
 
   // Start automatically once camera + microphone are ready.
   useEffect(() => {
@@ -150,13 +217,14 @@ function InterviewPage({
       try {
         setError("");
 
-        const result = await startLiveInterview(candidateId);
+        const result = await startInterview(candidateId);
         sessionRef.current = result.sessionId;
         setSessionId(result.sessionId);
 
         startRecording(); // camera + microphone, whole interview
         setStartedAt(Date.now());
-        setStatus("listening");
+
+        await deliverReply(result);
       } catch (err) {
         console.error("Interview start failed:", err);
         setError(err.message || "Could not start interview.");
@@ -165,34 +233,72 @@ function InterviewPage({
     }
 
     initializeInterview();
-  }, [candidateId, stream, fatalError, setSessionId, startRecording]);
+  }, [candidateId, stream, fatalError, setSessionId, startRecording, deliverReply]);
 
-  const live = useGeminiLive({
+  // The candidate finished an answer (silence detected).
+  const handleUtterance = useCallback(
+    async (audioBlob) => {
+      const id = sessionRef.current;
+      if (!id || finishedRef.current) return;
+
+      try {
+        setError("");
+        setStatus("thinking");
+
+        const reply = await sendVoiceAnswer(id, audioBlob);
+        failuresRef.current = 0;
+
+        if (reply.status === "no_speech") {
+          setStatus("listening"); // nothing intelligible: just keep listening
+          return;
+        }
+
+        await deliverReply(reply);
+      } catch (err) {
+        handleTurnError(err);
+      }
+    },
+    [deliverReply, handleTurnError]
+  );
+
+  // The candidate stayed silent for the configured time: the AI checks in.
+  const handleNoSpeech = useCallback(async () => {
+    const id = sessionRef.current;
+    if (!id || finishedRef.current) return;
+
+    try {
+      setError("");
+      setStatus("thinking");
+
+      const reply = await sendNoResponse(id);
+      failuresRef.current = 0;
+      await deliverReply(reply);
+    } catch (err) {
+      handleTurnError(err);
+    }
+  }, [deliverReply, handleTurnError]);
+
+  const { speechActive, error: listenError } = useAutoListen({
     stream,
-    sessionId,
-    onStatus: setStatus,
-    onFinished: () => finishInterview({ userEnded: false }),
+    enabled: viewStatus === "listening",
+    config: config.voice,
+    onUtterance: handleUtterance,
+    onNoSpeech: handleNoSpeech,
   });
-
-  useEffect(() => {
-    liveDisconnectRef.current = live.disconnect;
-    return () => {
-      liveDisconnectRef.current = null;
-    };
-  }, [live.disconnect]);
 
   // End interview manually
   const handleEndInterview = useCallback(async () => {
     if (!sessionRef.current || finishedRef.current) return;
 
-    liveDisconnectRef.current?.();
+    audioRef.current?.pause(); // stop the AI voice immediately
     await finishInterview({ userEnded: true });
   }, [finishInterview]);
 
   // Leaving the page releases the recorder and the AI voice.
   useEffect(() => {
+    const audio = audioRef.current;
     return () => {
-      liveDisconnectRef.current?.();
+      audio?.pause();
       stopRecording();
     };
   }, [stopRecording]);
@@ -212,7 +318,7 @@ function InterviewPage({
     }
   }, []);
 
-  const shownError = fatalError || error || live.error;
+  const shownError = fatalError || error || listenError;
   const isLive = viewStatus !== "finished" && viewStatus !== "error";
 
   return (
@@ -280,13 +386,13 @@ function InterviewPage({
         <div className="room-controls-center">
           <MicIndicator
             listening={viewStatus === "listening"}
-            speechActive={live.speechActive}
+            speechActive={speechActive}
           />
 
           <button
             className="end-button room-end"
             onClick={handleEndInterview}
-            disabled={!sessionId || viewStatus === "finished"}
+            disabled={!sessionId || viewStatus === "finished" || viewStatus === "error"}
           >
             End Interview
           </button>
@@ -295,6 +401,8 @@ function InterviewPage({
         {saving && <p className="room-note">Saving your recording...</p>}
         {shownError && <p className="room-error">{shownError}</p>}
       </footer>
+
+      <audio ref={audioRef} />
     </div>
   );
 }

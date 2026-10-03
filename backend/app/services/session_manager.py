@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db.models import Candidate, Interview
-from app.providers.gemini_provider import get_llm
+from app.providers.ollama_provider import get_llm
 from app.services.interview_service import InterviewSession, InterviewSettings
 from app.services.resume_service import analyze_resume, resume_text_for_prompt
 

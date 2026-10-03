@@ -1,19 +1,8 @@
 """
 Central configuration for the AI Video Interview backend.
 
-LLM architecture
------------------
-LOCAL DEVELOPMENT:
-    LLM_PROVIDER=gemini
-    Uses Gemini Developer API + GEMINI_API_KEY
-
-GCP PRODUCTION:
-    LLM_PROVIDER=vertex
-    Uses Vertex AI Gemini + Application Default Credentials
-    (Compute Engine service account in production)
-
-The rest of the application uses:
-    settings.active_model
+The interview runs fully self-hosted: Whisper (speech-to-text) -> Qwen served by Ollama -> Piper (text-to-speech).
+The model is chosen with OLLAMA_MODEL (default qwen2.5:3b-instruct); the rest of the app uses settings.active_model.
 """
 
 from pydantic import AliasChoices, Field, field_validator
@@ -53,72 +42,26 @@ class Settings(BaseSettings):
         return value
 
     # ================================================================
-    # LLM / GEMINI / VERTEX AI
+    # LLM (Qwen served by Ollama)
     # ================================================================
 
-    # gemini  -> Gemini Developer API
-    # vertex  -> Google Cloud Vertex AI
-    LLM_PROVIDER: str = "gemini"
+    OLLAMA_HOST: str = "http://localhost:11434"     # docker compose sets http://ollama:11434
+    OLLAMA_MODEL: str = "qwen2.5:3b-instruct"
+    OLLAMA_KEEP_ALIVE: str = "30m"                  # keep the model in memory between turns
+    OLLAMA_NUM_CTX: int = 4096
+    OLLAMA_TIMEOUT_SECONDS: float = 180.0           # CPU: the first reply after a restart is slow
 
-    # Local development only.
-    # NEVER commit this value to Git.
-    GEMINI_API_KEY: str = ""
-
-    # Model used with Gemini Developer API.
-    GEMINI_MODEL: str = "gemini-3.8-flash"
-
-    # ---- Real-time voice (Gemini Live) --------------------------------
-    # Native-audio model used by the live interview route, per provider.
-    GEMINI_LIVE_MODEL: str = "gemini-3.8-live"
-    VERTEX_LIVE_MODEL: str = "gemini-3.8-live"
-    LIVE_VOICE: str = ""                      # prebuilt voice name; empty = the model's default voice
-    LIVE_SILENCE_MS: int = 1800               # candidate silence that ends their turn (Google-side VAD)
-    LIVE_SESSION_RESUMPTION: bool = True      # lets a >15 min interview continue across Google's connection limit
-    LIVE_MAX_RECONNECTS: int = 3
-    LIVE_WRAPUP_LEAD_SECONDS: int = 90        # tell the interviewer to wrap up this long before the time limit
-    LIVE_FORCE_END_GRACE_SECONDS: int = 90    # hard stop this long after the time limit
-    LIVE_SILENCE_CHECKIN_SECONDS: int = 20    # candidate silent this long -> interviewer checks in (0 = off)
-
-    # Google Cloud project used by Vertex AI.
-    VERTEX_PROJECT_ID: str = _alias(
-        "",
-        "VERTEX_PROJECT_ID",
-        "GOOGLE_CLOUD_PROJECT",
-    )
-
-    # Vertex AI location.
-    VERTEX_LOCATION: str = "global"
-
-    # Model used with Vertex AI.
-    VERTEX_MODEL: str = "gemini-3.8-flash"
-
-    # Optional explicit override.
-    #
-    # Normally leave this empty.
-    # The provider-specific model above will then be selected automatically.
+    # Optional explicit override of OLLAMA_MODEL. Normally leave empty.
     LLM_MODEL: str = ""
 
     # Generation settings.
     LLM_TEMPERATURE: float = 0.7
     LLM_TOP_P: float = 0.9
-
-    # Gemini newer models may not need sampling parameters.
-    LLM_SEND_SAMPLING_PARAMS: bool = False
-
-    # Thinking level.
-    LLM_THINKING_LEVEL: str = "low"
-
-    # Maximum generated output.
     LLM_MAX_TOKENS: int = 1024
 
-    # Network timeout.
-    LLM_TIMEOUT_SECONDS: float = 60.0
-
-    # Automatic retry configuration.
+    # Automatic retry configuration (connection problems / timeouts).
     LLM_MAX_RETRIES: int = 3
     LLM_RETRY_BACKOFF_SECONDS: float = 2.0
-    # Used only when the main model stays overloaded / rate limited after the retries. Empty = no fallback.
-    LLM_FALLBACK_MODEL: str = "gemini-3.5-flash-lite"
 
     # Resume analysis.
     RESUME_ANALYSIS_TEMPERATURE: float = 0.1
@@ -365,36 +308,8 @@ class Settings(BaseSettings):
 
     @property
     def active_model(self) -> str:
-        """
-        Return the model that the currently selected provider should use.
-
-        Priority:
-
-        1. Explicit LLM_MODEL override
-        2. VERTEX_MODEL when provider=vertex
-        3. GEMINI_MODEL when provider=gemini
-        """
-
-        provider = self.LLM_PROVIDER.strip().lower()
-
-        if provider == "vertex":
-            default_model = self.VERTEX_MODEL.strip()
-        else:
-            default_model = self.GEMINI_MODEL.strip()
-
-        override = self.LLM_MODEL.strip()
-
-        if override:
-            return override
-
-        return default_model
-
-    @property
-    def live_model(self) -> str:
-        """Live (native audio) model id for the selected provider."""
-        if self.LLM_PROVIDER.strip().lower() == "vertex":
-            return self.VERTEX_LIVE_MODEL.strip()
-        return self.GEMINI_LIVE_MODEL.strip()
+        """The Ollama model to use: LLM_MODEL if set, otherwise OLLAMA_MODEL."""
+        return self.LLM_MODEL.strip() or self.OLLAMA_MODEL.strip()
 
     @property
     def cors_origins_list(self) -> list[str]:

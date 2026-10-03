@@ -1,6 +1,5 @@
 """
-Talk to the interviewer in the terminal (text in, text out) - needs GEMINI_API_KEY in backend/.env
-(or LLM_PROVIDER=vertex with Google Cloud credentials).
+Talk to the interviewer in the terminal (text in, text out) - needs a running Ollama with the model pulled.
 
     python test_interview.py "Candidate Name" path/to/resume.txt
 
@@ -10,7 +9,7 @@ import sys
 
 
 def main() -> None:
-    from app.providers.gemini_provider import get_llm
+    from app.providers.ollama_provider import get_llm
     from app.services.interview_service import InterviewSession, InterviewSettings
     from app.services.resume_service import analyze_resume, resume_text_for_prompt
 

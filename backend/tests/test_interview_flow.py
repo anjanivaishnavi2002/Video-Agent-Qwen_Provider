@@ -76,7 +76,7 @@ class FakeLLM:
                            "end_interview": self.end_early, "spoken_text": f"Question number {turn}?"})
 
     def chat_json(self, messages, schema, **kw):
-        from app.providers.gemini_provider import parse_json_loosely
+        from app.providers.ollama_provider import parse_json_loosely
         return parse_json_loosely(self.chat(messages, schema=schema, **kw))
 
 
@@ -189,120 +189,6 @@ def test_full_interview(env):
 
     # finished session no longer accepts answers
     assert _voice(client, sid).status_code == 404
-
-
-def test_live_interview_start_uses_live_model(env):
-    client, _, _, manager = env
-    candidate = _upload(client).json()
-    response = client.post(
-        "/session/start-live",
-        json={"candidate_id": candidate["candidate_id"]},
-    )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["session_id"] and data["session_token"]
-    assert "audio_base64" not in data
-    assert manager.SESSIONS[data["session_id"]].cfg.llm_model == "gemini-3.8-live"
-    assert manager.SESSIONS[data["session_id"]].transcript == []
-
-    with client.websocket_connect(f"/session/{data['session_id']}/live") as socket:
-        socket.send_json({"session_token": "invalid-token"})
-        assert socket.receive_json() == {"type": "error", "message": "Invalid session token"}
-
-
-def test_live_websocket_streams_audio_and_persists_transcript(env, monkeypatch):
-    import asyncio
-    from types import SimpleNamespace
-
-    from google import genai
-
-    client, _, _, manager = env
-    candidate = _upload(client).json()
-    started = client.post(
-        "/session/start-live",
-        json={"candidate_id": candidate["candidate_id"]},
-    ).json()
-    session_id = started["session_id"]
-
-    class FakeLive:
-        def __init__(self):
-            self.responses = asyncio.Queue()
-
-        async def send_realtime_input(self, *, text=None, audio=None):
-            if text:
-                await self.responses.put(response("Welcome, Ravi. Tell me about yourself?", None))
-            if audio:
-                assert audio.data == b"candidate-pcm"
-                await self.responses.put(response("Thanks, ", "I handled ", turn_complete=False))
-                await self.responses.put(response("what did you learn?", "customer calls."))
-
-        async def send_tool_response(self, **kwargs):
-            return None
-
-        async def receive(self):
-            while True:
-                yield await self.responses.get()
-
-    def response(assistant_text, candidate_text, *, turn_complete=True):
-        return SimpleNamespace(
-            tool_call=None,
-            server_content=SimpleNamespace(
-                interrupted=False,
-                input_transcription=SimpleNamespace(text=candidate_text) if candidate_text else None,
-                output_transcription=SimpleNamespace(text=assistant_text),
-                model_turn=SimpleNamespace(parts=[SimpleNamespace(
-                    inline_data=SimpleNamespace(data=b"gemini-pcm")
-                )]),
-                turn_complete=turn_complete,
-            ),
-        )
-
-    class FakeLiveContext:
-        async def __aenter__(self):
-            self.live = FakeLive()
-            return self.live
-
-        async def __aexit__(self, *_):
-            return None
-
-    class FakeClient:
-        def __init__(self):
-            def connect(**kwargs):
-                assert kwargs["model"] == "gemini-3.8-live"
-                return FakeLiveContext()
-
-            self.aio = SimpleNamespace(live=SimpleNamespace(connect=connect))
-
-    monkeypatch.setattr(genai, "Client", lambda **kwargs: FakeClient())
-    from app.config import settings
-    monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-key")
-
-    with client.websocket_connect(f"/session/{session_id}/live") as socket:
-        socket.send_json({"session_token": started["session_token"]})
-        assert socket.receive_json()["type"] == "ready"
-
-        greeting = []
-        while not any(item["type"] == "turn_complete" for item in greeting):
-            greeting.append(socket.receive_json())
-        assert any(item.get("role") == "assistant" for item in greeting)
-
-        socket.send_bytes(b"candidate-pcm")
-        answer = []
-        while not any(item["type"] == "turn_complete" for item in answer):
-            answer.append(socket.receive_json())
-
-        assert any(item["type"] == "audio" for item in answer)
-        assert any(item.get("role") == "candidate" and item["text"] == "I handled customer calls." for item in answer)
-        assert manager.SESSIONS[session_id].turns == 1
-        assert manager.SESSIONS[session_id].transcript[-1]["text"] == "Thanks, what did you learn?"
-
-        socket.send_json({"type": "end"})
-        assert socket.receive_json() == {"type": "finished"}
-
-    transcript = manager.SESSIONS.get(session_id)
-    assert transcript is None
-
 
 def test_empty_audio_and_silence_paths(env):
     client, fake, state, sm = env

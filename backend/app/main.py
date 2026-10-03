@@ -68,23 +68,17 @@ def health(deep: bool = False):
     Plain call: configuration only (no cost). `?deep=true`: also makes one tiny real model call,
     which proves the credentials, project/location, model id and network path end to end.
     """
-    provider = settings.LLM_PROVIDER.strip().lower()
     result: dict = {
         "status": "ok",
-        "llm_provider": provider,
+        "llm_provider": "ollama",
         "llm_model": settings.active_model,
-        "live_model": settings.GEMINI_LIVE_MODEL,
+        "ollama_host": settings.OLLAMA_HOST,
+        "configured": bool(settings.OLLAMA_HOST and settings.active_model),
     }
-    if provider == "vertex":
-        result["vertex_project"] = settings.VERTEX_PROJECT_ID or None
-        result["vertex_location"] = settings.VERTEX_LOCATION
-        result["configured"] = bool(settings.VERTEX_PROJECT_ID)   # auth = the VM's service account
-    else:
-        result["configured"] = bool(settings.GEMINI_API_KEY)      # the key itself is never returned
     if not result["configured"]:
         result["status"] = "llm_not_configured"
     elif deep:
-        from app.providers.gemini_provider import get_llm
+        from app.providers.ollama_provider import get_llm
         from app.providers.llm_errors import LLMError
 
         try:

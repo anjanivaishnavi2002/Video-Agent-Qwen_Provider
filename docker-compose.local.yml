@@ -16,9 +16,6 @@ services:
 
   backend:
     environment:
-      # Local/test stack: Gemini Developer API with the key from your .env (never baked into an image).
-      LLM_PROVIDER: gemini
-      GEMINI_API_KEY: ${GEMINI_API_KEY:?Set GEMINI_API_KEY in .env (see backend/.env.example)}
       DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/video_agent
       STORAGE_BACKEND: local
       ENABLE_DEBUG_ENDPOINTS: "true"
