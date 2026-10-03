@@ -33,3 +33,4 @@ typing-inspection==0.4.4
 typing_extensions==4.16.0
 uvicorn==0.54.0
 websockets>=13.0.0,<17.0
+psycopg[binary]>=3.2,<4
