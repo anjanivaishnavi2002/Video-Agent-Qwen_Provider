@@ -45,8 +45,11 @@ class Settings(BaseSettings):
     @classmethod
     def _normalise_database_url(cls, value: str) -> str:
         # Render / Heroku hand out "postgres://..." - SQLAlchemy needs "postgresql://..."
+        # and our driver is psycopg2 (newer SQLAlchemy would otherwise look for psycopg 3).
         if value.startswith("postgres://"):
-            return "postgresql://" + value[len("postgres://"):]
+            value = "postgresql://" + value[len("postgres://"):]
+        if value.startswith("postgresql://"):
+            value = "postgresql+psycopg2://" + value[len("postgresql://"):]
         return value
 
     # ================================================================
