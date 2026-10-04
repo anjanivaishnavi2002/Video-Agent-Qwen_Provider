@@ -68,13 +68,15 @@ def health(deep: bool = False):
     Plain call: configuration only (no cost). `?deep=true`: also makes one tiny real model call,
     which proves the credentials, project/location, model id and network path end to end.
     """
-    result: dict = {
-        "status": "ok",
-        "llm_provider": "ollama",
-        "llm_model": settings.active_model,
-        "ollama_host": settings.OLLAMA_HOST,
-        "configured": bool(settings.OLLAMA_HOST and settings.active_model),
-    }
+    provider = settings.LLM_PROVIDER.strip().lower()
+    result: dict = {"status": "ok", "llm_provider": provider, "llm_model": settings.active_model}
+    if provider == "vertex":
+        result["vertex_location"] = settings.VERTEX_LOCATION
+        result["vertex_endpoint"] = settings.VERTEX_ENDPOINT_ID or "managed (Model Garden)"
+        result["configured"] = bool(settings.active_model)
+    else:
+        result["ollama_host"] = settings.OLLAMA_HOST
+        result["configured"] = bool(settings.OLLAMA_HOST and settings.active_model)
     if not result["configured"]:
         result["status"] = "llm_not_configured"
     elif deep:

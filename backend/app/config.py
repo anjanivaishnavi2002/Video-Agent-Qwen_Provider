@@ -1,8 +1,9 @@
 """
 Central configuration for the AI Video Interview backend.
 
-The interview runs fully self-hosted: Whisper (speech-to-text) -> Qwen served by Ollama -> Piper (text-to-speech).
-The model is chosen with OLLAMA_MODEL (default qwen2.5:3b-instruct); the rest of the app uses settings.active_model.
+Voice is always Whisper (speech-to-text) on the server -> LLM -> Piper (text-to-speech) on the server.
+The LLM is Qwen, either self-hosted with Ollama (LLM_PROVIDER=ollama, default) or on Vertex AI (LLM_PROVIDER=vertex).
+The rest of the app uses settings.active_model.
 """
 
 from pydantic import AliasChoices, Field, field_validator
@@ -42,16 +43,30 @@ class Settings(BaseSettings):
         return value
 
     # ================================================================
-    # LLM (Qwen served by Ollama)
+    # LLM (Qwen)
     # ================================================================
 
+    # ollama -> Qwen on this server/VM (container)     vertex -> Qwen on Google Cloud Vertex AI
+    LLM_PROVIDER: str = "ollama"
+
+    # ---- Vertex AI (LLM_PROVIDER=vertex) -----------------------------------
+    # Auth is the VM's service account (no key): give it the "Vertex AI User" role + the cloud-platform scope.
+    VERTEX_PROJECT_ID: str = ""            # empty = the project of the VM's credentials
+    VERTEX_LOCATION: str = "us-central1"   # region of the model / endpoint (or "global")
+    VERTEX_MODEL: str = ""                 # model id copied from Model Garden
+    VERTEX_ENDPOINT_ID: str = ""           # only for a model you deployed yourself; empty = managed Model Garden API
+    VERTEX_BASE_URL: str = ""              # optional full override of the OpenAI-compatible base URL
+    VERTEX_JSON_MODE: str = "json_object"  # json_object | json_schema | none  (how JSON replies are requested)
+    VERTEX_TIMEOUT_SECONDS: float = 60.0
+
+    # ---- Self-hosted Qwen (LLM_PROVIDER=ollama) ----------------------------
     OLLAMA_HOST: str = "http://localhost:11434"     # docker compose sets http://ollama:11434
     OLLAMA_MODEL: str = "qwen2.5:3b-instruct"
     OLLAMA_KEEP_ALIVE: str = "30m"                  # keep the model in memory between turns
     OLLAMA_NUM_CTX: int = 4096
     OLLAMA_TIMEOUT_SECONDS: float = 180.0           # CPU: the first reply after a restart is slow
 
-    # Optional explicit override of OLLAMA_MODEL. Normally leave empty.
+    # Optional explicit override of the model name (OLLAMA_MODEL / VERTEX_MODEL). Normally leave empty.
     LLM_MODEL: str = ""
 
     # Generation settings.
@@ -308,7 +323,9 @@ class Settings(BaseSettings):
 
     @property
     def active_model(self) -> str:
-        """The Ollama model to use: LLM_MODEL if set, otherwise OLLAMA_MODEL."""
+        """LLM_MODEL if set, otherwise the model of the selected provider."""
+        if self.LLM_PROVIDER.strip().lower() == "vertex":
+            return self.LLM_MODEL.strip() or self.VERTEX_MODEL.strip()
         return self.LLM_MODEL.strip() or self.OLLAMA_MODEL.strip()
 
     @property

@@ -32,7 +32,7 @@ sections:
 
   - heading: "How AI is used"
     body:
-      - "The AI listens to you, speaks to you, and writes the transcript and a summary of the interview. To do this, your voice, the transcript and the text of your resume are processed by AI models that run on $organization's own servers. They are not sent to any outside AI service. The AI does not decide whether you are hired. People on the hiring team review your interview."
+      - "The AI listens to you, speaks to you, and writes the transcript and a summary of the interview. To do this, your voice, the transcript and the text of your resume are processed by AI models operated for $organization, either on its own servers or on its cloud provider (Google Cloud), which acts as a service provider. The AI does not decide whether you are hired. People on the hiring team review your interview."
 
   - heading: "Who can see it and how long we keep it"
     body:

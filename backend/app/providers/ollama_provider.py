@@ -1,5 +1,5 @@
 """
-Qwen (or any model) served by Ollama - the only LLM back end.
+Qwen (or any model) served by Ollama - the self-hosted LLM back end (the other is vertex_provider.py).
 
     OLLAMA_HOST=http://ollama:11434   OLLAMA_MODEL=qwen2.5:3b-instruct
 
@@ -169,17 +169,21 @@ class OllamaProvider:
 # ----------------------------------------------------------------------
 # Shared instance
 # ----------------------------------------------------------------------
-_provider: OllamaProvider | None = None
+_provider = None
 _lock = threading.Lock()
 
 
-def get_llm() -> OllamaProvider:
-    """The shared model client (created on first use)."""
+def get_llm():
+    """The shared model client (created on first use): Ollama, or Vertex AI when LLM_PROVIDER=vertex."""
     global _provider
     if _provider is None:
         with _lock:
             if _provider is None:
-                _provider = OllamaProvider()
+                if settings.LLM_PROVIDER.strip().lower() == "vertex":
+                    from app.providers.vertex_provider import VertexProvider   # imports this module: avoid a cycle
+                    _provider = VertexProvider()
+                else:
+                    _provider = OllamaProvider()
     return _provider
 
 

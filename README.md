@@ -1,6 +1,7 @@
 # AI Video Interview Agent (BPO)
 
-A hands-free voice interviewer that runs **fully self-hosted**. The candidate enters a name and uploads a resume.
+A hands-free voice interviewer. Speech-to-text (Whisper) and text-to-speech (Piper) run on your server; the LLM is Qwen,
+either self-hosted with Ollama (default) or on **Google Cloud Vertex AI** (`LLM_PROVIDER=vertex`, see `DEPLOY_GCP.md`, Option B). The candidate enters a name and uploads a resume.
 The interviewer (Alex) then asks questions generated from the **resume + conversation + BPO context**; there are no
 fixed questions. Each turn: the browser detects when the candidate stops speaking, the backend transcribes it
 (Faster-Whisper), Qwen (served by Ollama) decides the next question, and Piper speaks it. The camera and microphone are
@@ -14,7 +15,7 @@ Browser --HTTPS--> web (Caddy: React app, /api proxy, automatic HTTPS)
                               └--> local disk (or a Cloud Storage bucket) for resumes and recordings
 ```
 
-No audio, transcript or resume text is sent to any outside AI service.
+With `LLM_PROVIDER=ollama` nothing leaves your VM. With `LLM_PROVIDER=vertex` the transcript and resume text are sent to Vertex AI (audio stays on the VM).
 
 ## Repository layout
 
@@ -25,6 +26,7 @@ No audio, transcript or resume text is sent to any outside AI service.
 | `docker-compose.yml` | Production stack for one VM (`web`, `backend`, `ollama`, `ollama-pull`, `cloudsql-proxy`) |
 | `docker-compose.poc.yml` | Overlay: PostgreSQL container + local disk (single-VM proof of concept) |
 | `docker-compose.local.yml` | Overlay: local Postgres, port 8080, to try everything on your own machine |
+| `docker-compose.vertex.yml` | Overlay: Qwen on Vertex AI, no Ollama containers (small VM) |
 | `docker-compose.gpu.yml` | Overlay for a GPU VM (faster replies) |
 | `DEPLOY_GCP.md` | Step-by-step deployment on the Compute Engine VM |
 | `infra/gcp/` | `setup.sh` (one-time GCP provisioning), `vm-startup.sh` |

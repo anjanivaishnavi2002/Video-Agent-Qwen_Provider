@@ -1,0 +1,15 @@
+# Qwen on Vertex AI instead of a local model: no ollama containers, so a smaller VM is enough.
+#   docker compose -f docker-compose.yml -f docker-compose.poc.yml -f docker-compose.vertex.yml up -d --build
+# Needs in .env:  VERTEX_MODEL=<id from Vertex AI > Model Garden>   (and VERTEX_LOCATION, VERTEX_PROJECT_ID if not the defaults)
+# The VM's service account needs the "Vertex AI User" role and the cloud-platform access scope.
+services:
+  backend:
+    environment:
+      LLM_PROVIDER: vertex
+    depends_on: !reset null   # the backend no longer waits for ollama
+
+  ollama:
+    profiles: ["local-llm"]   # not started unless explicitly requested
+
+  ollama-pull:
+    profiles: ["local-llm"]
