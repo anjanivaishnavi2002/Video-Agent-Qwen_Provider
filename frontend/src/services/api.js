@@ -144,6 +144,18 @@ export async function uploadResume(name, file, consentVersion, details = {}) {
 // Interview
 // ---------------------------------------------------------
 
+export function getSessionToken() {
+  return sessionToken;
+}
+
+// ws:// or wss:// URL of the Gemini Live interview socket (same host as the API).
+export function liveSocketUrl(sessionId) {
+  const base = API_BASE_URL.startsWith("http")
+    ? API_BASE_URL
+    : `${window.location.origin}${API_BASE_URL}`;
+  return `${base.replace(/^http/, "ws")}/session/${sessionId}/live`;
+}
+
 export async function startInterview(candidateId) {
   const response = await request(
     "/session/start",
@@ -156,7 +168,7 @@ export async function startInterview(candidateId) {
   );
   const data = await response.json();
   sessionToken = data.session_token;
-  return { sessionId: data.session_id, ...parseSpokenReply(data) };
+  return { sessionId: data.session_id, mode: data.mode || "turn", ...parseSpokenReply(data) };
 }
 
 // `audioBlob` is a WAV of one complete answer (recorded hands-free).

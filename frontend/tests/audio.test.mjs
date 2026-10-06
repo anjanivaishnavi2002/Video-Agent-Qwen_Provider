@@ -114,3 +114,24 @@ test("WAV encoder: valid header, correct length, downsampled", async () => {
   assert.equal(buf.readUInt32LE(40), 16000 * 2);
   assert.equal(buf.length, 44 + 32000);
 });
+
+// ---- Gemini Live audio helpers ----
+import { floatToPcm16, pcm16ToFloat, resample } from "../src/audio/liveAudio.js";
+
+test("live audio: float -> PCM16 -> float round trip and clipping", () => {
+  const pcm = floatToPcm16(new Float32Array([0, 0.5, -0.5, 1, -1, 2, -2]));
+  assert.equal(pcm[0], 0);
+  assert.equal(pcm[3], 0x7fff);
+  assert.equal(pcm[4], -0x8000);
+  assert.equal(pcm[5], 0x7fff); // clipped, no wrap-around
+  assert.equal(pcm[6], -0x8000);
+  const back = pcm16ToFloat(pcm.buffer);
+  assert.ok(Math.abs(back[1] - 0.5) < 1e-3 && Math.abs(back[2] + 0.5) < 1e-3);
+});
+
+test("live audio: pcm16ToFloat ignores a dangling byte and resample changes the length", () => {
+  assert.equal(pcm16ToFloat(new Uint8Array([1, 0, 9]).buffer).length, 1);
+  const down = resample(new Float32Array(48000), 48000, 16000);
+  assert.equal(down.length, 16000);
+  assert.equal(resample(new Float32Array(10), 16000, 16000).length, 10);
+});

@@ -8,6 +8,7 @@ import ReportPanel from "../components/ReportPanel";
 
 import useAutoListen from "../hooks/useAutoListen";
 import useInterviewRecorder from "../hooks/useInterviewRecorder";
+import useLiveInterview from "../hooks/useLiveInterview";
 import useMediaStream from "../hooks/useMediaStream";
 import useSessionEvents from "../hooks/useSessionEvents";
 
@@ -132,7 +133,7 @@ function InterviewPage({
 
   // Stop the recording, save monitoring events and upload the video.
   const finishInterview = useCallback(
-    async ({ userEnded }) => {
+    async ({ userEnded, alreadyEnded = false }) => {
       if (finishedRef.current) return;
       finishedRef.current = true;
 
@@ -142,7 +143,7 @@ function InterviewPage({
       const id = sessionRef.current;
 
       try {
-        if (userEnded && id) {
+        if (userEnded && id && !alreadyEnded && !liveModeRef.current) {
           await endInterview(id);
         }
 
@@ -173,6 +174,17 @@ function InterviewPage({
     },
     [stopRecording, flushEvents]
   );
+
+  // Gemini Live (real-time voice): the backend relays the audio, so there is no turn loop in the browser.
+  const liveModeRef = useRef(false);
+  const [liveVoice, setLiveVoice] = useState(false);
+  const live = useLiveInterview({
+    onSpeaking: (active) => {
+      if (!finishedRef.current) setStatus(active ? "speaking" : "listening");
+    },
+    onFinished: () => finishInterview({ userEnded: false, alreadyEnded: true }),
+    onError: (message) => setError(message),
+  });
 
   // Speak the interviewer's reply, then either finish or listen again.
   const deliverReply = useCallback(
@@ -224,6 +236,14 @@ function InterviewPage({
         startRecording(); // camera + microphone, whole interview
         setStartedAt(Date.now());
 
+        if (result.mode === "live") {
+          liveModeRef.current = true;
+          setLiveVoice(true);
+          await live.connect({ sessionId: result.sessionId, stream });
+          setStatus("listening");
+          return;
+        }
+
         await deliverReply(result);
       } catch (err) {
         console.error("Interview start failed:", err);
@@ -233,7 +253,7 @@ function InterviewPage({
     }
 
     initializeInterview();
-  }, [candidateId, stream, fatalError, setSessionId, startRecording, deliverReply]);
+  }, [candidateId, stream, fatalError, setSessionId, startRecording, deliverReply, live]);
 
   // The candidate finished an answer (silence detected).
   const handleUtterance = useCallback(
@@ -280,7 +300,7 @@ function InterviewPage({
 
   const { speechActive, error: listenError } = useAutoListen({
     stream,
-    enabled: viewStatus === "listening",
+    enabled: viewStatus === "listening" && !liveVoice,
     config: config.voice,
     onUtterance: handleUtterance,
     onNoSpeech: handleNoSpeech,
@@ -291,8 +311,12 @@ function InterviewPage({
     if (!sessionRef.current || finishedRef.current) return;
 
     audioRef.current?.pause(); // stop the AI voice immediately
+    if (liveModeRef.current) {
+      live.end(); // the backend saves the transcript, then answers "finished"
+      return;
+    }
     await finishInterview({ userEnded: true });
-  }, [finishInterview]);
+  }, [finishInterview, live]);
 
   // Leaving the page releases the recorder and the AI voice.
   useEffect(() => {
