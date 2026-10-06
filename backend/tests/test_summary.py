@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 from datetime import datetime
 
-from tests.test_interview_flow import _upload, _voice, env  # noqa: F401
+from tests.test_interview_flow import _start, _upload, _voice, env  # noqa: F401
 
 from app.providers.llm_errors import LLMRateLimitError
 from app.services import summary_service
@@ -36,8 +36,7 @@ class FakeSummaryLLM:
 
 
 def _finished_interview(client, state):
-    sid = _upload(client).json()["candidate_id"]
-    started = client.post("/session/start", json={"candidate_id": sid}).json()
+    started = _start(client, _upload(client).json()).json()
     session_id = started["session_id"]
     state["texts"] = ["I handled inbound calls.", "Mostly billing disputes."]
     for _ in range(2):
@@ -91,7 +90,7 @@ def test_summary_failure_is_reported_then_can_be_retried(env, monkeypatch):  # n
 def test_no_answers_means_no_summary(env, monkeypatch):  # noqa: F811
     client, *_ = env
     monkeypatch.setattr(summary_service, "get_llm", lambda: FakeSummaryLLM())
-    started = client.post("/session/start", json={"candidate_id": _upload(client).json()["candidate_id"]}).json()
+    started = _start(client, _upload(client).json()).json()
     client.post(f"/session/{started['session_id']}/end", json={})
     assert client.post(f"/session/{started['session_id']}/summary").json()["status"] == "skipped"
 

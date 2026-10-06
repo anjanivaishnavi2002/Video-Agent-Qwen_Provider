@@ -1,0 +1,46 @@
+server {
+    listen ${PORT};
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+    server_tokens off;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml application/wasm;
+
+    # Security headers. Camera/microphone are needed by the interview; nothing else is.
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "camera=(self), microphone=(self), fullscreen=(self)" always;
+    # connect-src: the backend API + Cloud Storage (signed recording upload, MediaPipe face model download).
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: data:; worker-src 'self' blob:; connect-src 'self' ${API_ORIGIN} https://storage.googleapis.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+
+    location = /healthz { access_log off; default_type text/plain; return 200 "ok"; }
+
+    # Runtime config must never be cached.
+    location = /config.json { add_header Cache-Control "no-store" always; default_type application/json; }
+
+    # Hashed build assets can be cached for a year (add_header in a location drops the server-level ones, so repeat).
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        try_files $uri =404;
+    }
+    location /mediapipe/ {
+        add_header Cache-Control "public, max-age=86400" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        try_files $uri =404;
+    }
+
+    # Single-page app: /admin/login and every other route fall back to index.html.
+    location / {
+        add_header Cache-Control "no-cache" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "camera=(self), microphone=(self), fullscreen=(self)" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: data:; worker-src 'self' blob:; connect-src 'self' ${API_ORIGIN} https://storage.googleapis.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+        try_files $uri /index.html;
+    }
+}

@@ -43,6 +43,31 @@ def format_profile(profile: dict | None) -> str:
     return json.dumps(profile, ensure_ascii=False, indent=1)
 
 
+def format_job(job: dict | None) -> str:
+    if not job or not (job.get("description") or job.get("title")):
+        return "(No specific job was provided - interview for general suitability for the domain above.)"
+    lines = [f"Job title: {job.get('title') or 'not specified'}"]
+    if job.get("location"):
+        lines.append(f"Location: {job['location']}")
+    if job.get("skills"):
+        lines.append("Required skills: " + ", ".join(str(x) for x in job["skills"]))
+    lines.append('Job description:\n"""\n' + str(job.get("description") or "").strip() + '\n"""')
+    return "\n".join(lines)
+
+
+def format_candidate_info(info: dict | None) -> str:
+    """Only what helps the interview (no e-mail / phone: the interviewer never needs contact details)."""
+    parts = []
+    if info:
+        if info.get("location"):
+            parts.append(f"Location: {info['location']}")
+        if info.get("experience_years") is not None:
+            parts.append(f"Self-reported experience: {info['experience_years']} years")
+        if info.get("skills"):
+            parts.append("Self-reported skills: " + ", ".join(str(x) for x in info["skills"]))
+    return "\n".join(parts) if parts else "(none provided)"
+
+
 def build_system_prompt(
     *,
     interviewer_name: str,
@@ -51,8 +76,10 @@ def build_system_prompt(
     candidate_name: str,
     resume_profile: dict | None,
     resume_text: str | None,
+    job: dict | None = None,
+    candidate_info: dict | None = None,
 ) -> str:
-    """resume_text is None when the resume is too long to include verbatim."""
+    """resume_text is None when the resume is too long to include verbatim. `job` = {title, description, skills}."""
     prompts = load_prompts()
     if resume_text:
         block = f'\nFULL RESUME TEXT:\n"""\n{resume_text}\n"""\n'
@@ -60,6 +87,8 @@ def build_system_prompt(
         block = ""
     return render(
         prompts["system_template"],
+        job_block=format_job(job),
+        candidate_info=format_candidate_info(candidate_info),
         interviewer_name=interviewer_name,
         tone=tone,
         interview_type=interview_type,

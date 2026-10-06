@@ -2,8 +2,8 @@
 Dynamic interview engine.
 
 There is no question list and no fixed sequence here. Every turn the model
-receives structured context (candidate, resume profile, conversation, latest
-answer, interview settings, state) and decides for itself what to explore,
+receives structured context (job description, candidate, resume profile,
+conversation, latest answer, interview settings, state) and decides for itself what to explore,
 whether to follow up, move on, pose a situational question, or end.
 """
 import json
@@ -15,7 +15,7 @@ from datetime import datetime
 
 from app.config import settings
 from app.prompts.interviewer import build_system_prompt, load_prompts, render
-from app.providers.ollama_provider import OllamaProvider, get_llm
+from app.providers.factory import get_llm
 from app.providers.llm_errors import LLMResponseError
 
 logger = logging.getLogger(__name__)
@@ -90,9 +90,11 @@ class InterviewSession:
         resume_profile: dict | None,
         resume_text: str | None,
         *,
-        llm: OllamaProvider | None = None,
+        llm=None,
         transcript: list[dict] | None = None,
         started_at: datetime | None = None,
+        job: dict | None = None,
+        candidate_info: dict | None = None,
     ):
         """
         resume_text: the resume text to embed verbatim (None -> profile only).
@@ -119,6 +121,8 @@ class InterviewSession:
             candidate_name=candidate_name,
             resume_profile=resume_profile,
             resume_text=resume_text,
+            job=job,
+            candidate_info=candidate_info,
         )
 
     # ------------------------------------------------------------------

@@ -10,7 +10,6 @@ analysis and the report never depend on the model details. Structured output use
 import json
 import logging
 import re
-import threading
 import time
 
 import httpx
@@ -54,11 +53,11 @@ def _translate(exc: Exception, model: str, host: str) -> LLMError:
 def _parse_structured(text: str, schema: dict | None) -> dict:
     data = parse_json_loosely(text)
     if data is None:
-        raise LLMResponseError("The model's answer was not valid JSON.", detail=text[:300])
+        raise LLMResponseError("The model's answer was not valid JSON.", detail=f"{len(text)} characters (content not logged)")
     missing = [key for key in (schema or {}).get("required", []) if key not in data]
     if missing:
         raise LLMResponseError(
-            f"The model's answer is missing fields: {', '.join(missing)}.", detail=text[:300]
+            f"The model's answer is missing fields: {', '.join(missing)}.", detail=f"{len(text)} characters (content not logged)"
         )
     return data
 
@@ -145,50 +144,23 @@ class OllamaProvider:
                 data = response.json()
                 text = ((data.get("message") or {}).get("content") or "").strip()
                 if not text:
-                    raise LLMResponseError("The model returned an empty answer.", detail=str(data)[:300])
+                    raise LLMResponseError("The model returned an empty answer.", detail="empty response")
                 if data.get("done_reason") == "length" and parse:
                     raise LLMResponseError(
                         "The model's answer was cut off at the output limit. Raise LLM_MAX_TOKENS.",
-                        detail=text[:300], retryable=False)
+                        detail=f"{len(text)} characters (content not logged)", retryable=False)
                 result = _parse_structured(text, schema) if parse else text
                 logger.info("LLM ok: %d ms, tokens in=%s out=%s", int((time.time() - started) * 1000),
                             data.get("prompt_eval_count", "?"), data.get("eval_count", "?"))
                 return result
             except Exception as exc:
                 error = exc if isinstance(exc, LLMError) else _translate(exc, self.model, self.host)
-                logger.warning("LLM call failed (attempt %d/%d): %s: %s | %s", attempt, attempts,
-                               type(error).__name__, error.message, error.detail or "")
+                logger.warning("LLM call failed (attempt %d/%d): %s: %s ", attempt, attempts,
+                               type(error).__name__, error.message)
+                logger.debug("LLM error detail: %s", error.detail)
                 if error.retryable and attempt < attempts:
                     time.sleep(settings.LLM_RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)))
                     continue
                 if error is exc:
                     raise
                 raise error from exc
-
-
-# ----------------------------------------------------------------------
-# Shared instance
-# ----------------------------------------------------------------------
-_provider = None
-_lock = threading.Lock()
-
-
-def get_llm():
-    """The shared model client (created on first use): Ollama, or Vertex AI when LLM_PROVIDER=vertex."""
-    global _provider
-    if _provider is None:
-        with _lock:
-            if _provider is None:
-                if settings.LLM_PROVIDER.strip().lower() == "vertex":
-                    from app.providers.vertex_provider import VertexProvider   # imports this module: avoid a cycle
-                    _provider = VertexProvider()
-                else:
-                    _provider = OllamaProvider()
-    return _provider
-
-
-def reset_llm() -> None:
-    """Forget the cached client (tests, or after changing settings)."""
-    global _provider
-    with _lock:
-        _provider = None

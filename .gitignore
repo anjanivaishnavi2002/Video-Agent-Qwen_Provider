@@ -29,3 +29,12 @@ _backup_before_refactor.zip
 _stage*.tgz
 *.log
 .DS_Store
+
+# Secrets / local config (never commit). Keep the .env.example templates.
+.env.*
+!.env.example
+infra/cloudrun/env.local.sh
+*.pem
+*.key
+*service-account*.json
+application_default_credentials.json

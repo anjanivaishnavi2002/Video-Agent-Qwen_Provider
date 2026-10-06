@@ -917,7 +917,11 @@ audio {
 }
 
 .lobby .resume-card input[type="text"],
-.lobby input[type="text"] {
+.lobby input[type="text"],
+.lobby input[type="email"],
+.lobby input[type="tel"],
+.lobby input[type="number"],
+.lobby select {
   width: 100%;
   padding: 14px 16px;
   border: 1px solid var(--room-line);
@@ -927,7 +931,11 @@ audio {
   outline: none;
 }
 
-.lobby input[type="text"]:focus {
+.lobby input[type="text"]:focus,
+.lobby input[type="email"]:focus,
+.lobby input[type="tel"]:focus,
+.lobby input[type="number"]:focus,
+.lobby select:focus {
   border-color: var(--room-accent);
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
 }

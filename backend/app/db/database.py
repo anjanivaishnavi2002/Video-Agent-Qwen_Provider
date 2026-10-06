@@ -1,12 +1,21 @@
 import logging
 import time
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from app.config import settings
 
-engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
+def _make_engine():
+    kwargs: dict = {"pool_pre_ping": True}
+    if not settings.DATABASE_URL.startswith("sqlite"):
+        # Cloud SQL has a connection cap: keep the per-instance pool small (instances x pool_size must fit).
+        kwargs.update(pool_size=settings.DB_POOL_SIZE, max_overflow=settings.DB_MAX_OVERFLOW,
+                      pool_recycle=settings.DB_POOL_RECYCLE_SECONDS)
+    return create_engine(settings.DATABASE_URL, **kwargs)
+
+
+engine = _make_engine()
 SessionLocal = sessionmaker(bind=engine, autoflush=False)
 Base = declarative_base()
 logger = logging.getLogger(__name__)
@@ -20,55 +29,16 @@ def get_db():
         db.close()
 
 
-# Columns added after the first version of the schema. `create_all` only creates
-# missing TABLES, so existing databases get these added here (idempotent).
-# The same statements are available as backend/migrations/001_dynamic_interview.sql
-_ADDED_COLUMNS = {
-    "candidates": {
-        "resume_filename": "VARCHAR",
-        "resume_profile": "JSON",
-        "consent_version": "VARCHAR",
-        "consented_at": "TIMESTAMP",
-    },
-    "interviews": {
-        "end_reason": "VARCHAR",
-        "settings_snapshot": "JSON",
-        "access_token": "VARCHAR",
-        "started_at": "TIMESTAMP",
-        "ended_at": "TIMESTAMP",
-        "video_size_bytes": "INTEGER",
-        "video_uploaded_at": "TIMESTAMP",
-        "summary": "JSON",
-    },
-}
-
-
 def init_db() -> None:
-    """Create missing tables and add missing columns to existing ones."""
-    from app.db import models  # noqa: F401  (registers the tables)
-
+    """
+    Wait for the database. Tables are created here ONLY when AUTO_CREATE_SCHEMA=true (local dev / tests).
+    Production schema changes are applied with `alembic upgrade head` (see docs/DEPLOYMENT.md).
+    """
     _wait_for_database()
-    Base.metadata.create_all(bind=engine)
+    if settings.AUTO_CREATE_SCHEMA:
+        from app.db import models  # noqa: F401  (registers the tables)
 
-    inspector = inspect(engine)
-    postgres = engine.dialect.name == "postgresql"
-    for table, columns in _ADDED_COLUMNS.items():
-        existing = {c["name"] for c in inspector.get_columns(table)}
-        for name, sql_type in columns.items():
-            if name in existing:
-                continue
-            # IF NOT EXISTS makes this safe when two processes start at the same moment
-            # (uvicorn --reload, several containers). Each column gets its own transaction.
-            clause = "IF NOT EXISTS " if postgres else ""
-            try:
-                with engine.begin() as connection:
-                    connection.execute(
-                        text(f"ALTER TABLE {table} ADD COLUMN {clause}{name} {sql_type}")
-                    )
-            except Exception as exc:
-                if "already exists" in str(exc).lower() or "duplicate column" in str(exc).lower():
-                    continue  # another process added it first
-                raise
+        Base.metadata.create_all(bind=engine)
 
 
 def _wait_for_database() -> None:

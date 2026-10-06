@@ -5,7 +5,7 @@ import Welcomepage from "./pages/Welcomepage";
 import ConsentPage from "./pages/ConsentPage";
 import ResumePage from "./pages/ResumePage";
 import InterviewPage from "./pages/InterviewPage";
-import { getPublicConfig } from "./services/api";
+import { getInvitation, getPublicConfig, setInviteToken } from "./services/api";
 
 function App() {
   const [page, setPage] = useState("welcome");
@@ -18,6 +18,24 @@ function App() {
   // come from the backend configuration, so there is one place to change them.
   const [config, setConfig] = useState(null);
   const [configError, setConfigError] = useState("");
+
+  // Invitation link (?invite=...): the candidate already applied, so skip the resume step.
+  const [invitation, setInvitation] = useState(null);
+  const [inviteError, setInviteError] = useState("");
+
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get("invite");
+    if (!token) return;
+    getInvitation(token)
+      .then((data) => {
+        setInviteToken(token);
+        setInvitation(data);
+        if (!data.can_start) setInviteError(data.message || "This interview cannot be started.");
+        // Remove the secret from the address bar / history once it has been captured.
+        window.history.replaceState({}, "", window.location.pathname);
+      })
+      .catch((err) => setInviteError(err.message));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,6 +72,16 @@ function App() {
     );
   }
 
+  if (inviteError) {
+    return (
+      <div className="page">
+        <div className="resume-card">
+          <p className="error">{inviteError}</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       {page === "welcome" && (
@@ -67,7 +95,13 @@ function App() {
         <ConsentPage
           onAccept={(version) => {
             setConsentVersion(version);
-            setPage("resume");
+            if (invitation && invitation.can_start) {
+              setCandidateId(invitation.candidate_id);
+              setCandidateName(invitation.name);
+              setPage("interview");
+            } else {
+              setPage("resume");
+            }
           }}
           onDecline={() => setPage("welcome")}
         />

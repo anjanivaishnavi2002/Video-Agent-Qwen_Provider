@@ -11,8 +11,8 @@ from app.config import settings
 from app.db.database import get_db
 from app.db.models import Candidate, Interview, InterviewEvent
 from app.providers.llm_errors import LLMError
-from app.security import require_admin_or_session, require_session_token
-from app.services import session_manager, storage, voice_service
+from app.security import _same, require_admin_or_session, require_session_token
+from app.services import candidate_service, evaluation_service, session_manager, storage, voice_service
 from app.services import summary_service
 from app.services.interview_service import InterviewSession
 
@@ -29,6 +29,7 @@ CHUNK_SIZE = 1024 * 1024  # 1 MB
 
 class StartRequest(BaseModel):
     candidate_id: int
+    invite_token: str = Field(min_length=16, max_length=128)   # secret from the application / invitation link
 
 
 class EndRequest(BaseModel):
@@ -88,14 +89,15 @@ def _speak(text: str | None, finished: bool, **extra) -> dict:
             wav = voice_service.synthesize(text)
         except Exception as exc:
             logger.exception("Voice synthesis failed")
-            raise HTTPException(status_code=500, detail=f"Voice synthesis failed: {exc}") from exc
+            raise HTTPException(status_code=500, detail="Voice synthesis failed. Please try again.") from exc
         body["audio_base64"] = base64.b64encode(wav).decode("ascii")
         if settings.DEBUG_EXPOSE_TEXT:
             body["ai_text"] = text
     return body
 
 
-def _finish_if_done(db: Session, session_id: int, session: InterviewSession) -> None:
+def _finish_if_done(db: Session, session_id: int, session: InterviewSession,
+                    background: BackgroundTasks | None = None) -> None:
     session_manager.persist(
         db,
         session_id,
@@ -106,6 +108,8 @@ def _finish_if_done(db: Session, session_id: int, session: InterviewSession) -> 
             else None
         ),
     )
+    if session.finished and background is not None:
+        background.add_task(evaluation_service.evaluate_in_background, session_id)
 
 
 def _to_naive_utc(value: datetime | None) -> datetime:
@@ -123,8 +127,12 @@ def _to_naive_utc(value: datetime | None) -> datetime:
 @router.post("/start")
 def start_session(data: StartRequest, db: Session = Depends(get_db)):
     candidate = db.get(Candidate, data.candidate_id)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    # Same answer for "no such candidate" and "wrong token": candidate ids must not be guessable/enumerable.
+    if not candidate or not _same(candidate.invite_token, data.invite_token):
+        raise HTTPException(status_code=403, detail="This interview link is not valid.")
+    allowed, reason = candidate_service.can_start_interview(candidate)
+    if not allowed:
+        raise HTTPException(status_code=409, detail=reason)
 
     try:
         interview, session = session_manager.create_session(db, candidate)
@@ -133,7 +141,13 @@ def start_session(data: StartRequest, db: Session = Depends(get_db)):
         raise _llm_http_error(exc) from exc
     except Exception as exc:
         logger.exception("Could not prepare interview")
-        raise HTTPException(status_code=500, detail=f"Could not prepare interview: {exc}") from exc
+        raise HTTPException(status_code=500, detail="Could not prepare the interview. Please try again.") from exc
+
+    if settings.live_mode:
+        # Gemini Live speaks the opening itself, over the WebSocket. Nothing to generate or synthesise here.
+        return {"status": "ok", "finished": False, "mode": "live", "session_id": interview.id,
+                "candidate_id": candidate.id, "session_token": interview.access_token,
+                "live": {"input_rate": 16000, "output_rate": 24000}}
 
     try:
         text = session.start()
@@ -149,14 +163,16 @@ def start_session(data: StartRequest, db: Session = Depends(get_db)):
         logger.error("AI interviewer failed to start: %s | %s", exc.message, exc.detail)
         session_manager.SESSIONS.pop(interview.id, None)
         interview.status = "failed"
+        candidate_service.refund_attempt(db, candidate)
         db.commit()
         raise _llm_http_error(exc) from exc
     except Exception as exc:
         logger.exception("AI interviewer failed to start")
         session_manager.SESSIONS.pop(interview.id, None)
         interview.status = "failed"
+        candidate_service.refund_attempt(db, candidate)
         db.commit()
-        raise HTTPException(status_code=500, detail=f"AI interviewer failed: {exc}") from exc
+        raise HTTPException(status_code=500, detail="The AI interviewer failed. Please try again.") from exc
 
     session_manager.persist(db, interview.id, session)
     return body
@@ -165,6 +181,7 @@ def start_session(data: StartRequest, db: Session = Depends(get_db)):
 @router.post("/{session_id}/voice-answer", dependencies=[Depends(require_session_token)])
 def voice_answer(
     session_id: int,
+    background: BackgroundTasks,
     audio: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
@@ -183,11 +200,11 @@ def voice_answer(
             candidate_text = voice_service.transcribe(audio_bytes, suffix=suffix).strip()
         except Exception as exc:
             logger.exception("Speech recognition failed")
-            raise HTTPException(status_code=500, detail=f"Speech recognition failed: {exc}") from exc
+            raise HTTPException(status_code=500, detail="Speech recognition failed. Please try again.") from exc
 
         # 2) Nothing intelligible -> the interviewer may ask the candidate to repeat
         if not candidate_text:
-            return _handle_empty(db, session_id, session, silence_timeout=False)
+            return _handle_empty(db, session_id, session, silence_timeout=False, background=background)
 
         # 3) The model decides the next move
         try:
@@ -197,9 +214,9 @@ def voice_answer(
             raise _llm_http_error(exc) from exc
         except Exception as exc:
             logger.exception("AI interviewer failed")
-            raise HTTPException(status_code=500, detail=f"AI interviewer failed: {exc}") from exc
+            raise HTTPException(status_code=500, detail="The AI interviewer failed. Please try again.") from exc
 
-        _finish_if_done(db, session_id, session)
+        _finish_if_done(db, session_id, session, background)
         extra = {"candidate_text": candidate_text} if settings.DEBUG_EXPOSE_TEXT else {}
 
         # 4) Text -> speech (Piper)
@@ -209,17 +226,18 @@ def voice_answer(
 
 
 @router.post("/{session_id}/no-response", dependencies=[Depends(require_session_token)])
-def no_response(session_id: int, db: Session = Depends(get_db)):
+def no_response(session_id: int, background: BackgroundTasks, db: Session = Depends(get_db)):
     """The candidate stayed silent for the configured time: the interviewer checks in."""
     session = _active_session(db, session_id)
     _acquire(session)
     try:
-        return _handle_empty(db, session_id, session, silence_timeout=True)
+        return _handle_empty(db, session_id, session, silence_timeout=True, background=background)
     finally:
         session.lock.release()
 
 
-def _handle_empty(db: Session, session_id: int, session: InterviewSession, *, silence_timeout: bool) -> dict:
+def _handle_empty(db: Session, session_id: int, session: InterviewSession, *, silence_timeout: bool,
+                  background: BackgroundTasks | None = None) -> dict:
     try:
         text, finished = session.register_empty(silence_timeout=silence_timeout)
     except LLMError as exc:
@@ -227,21 +245,23 @@ def _handle_empty(db: Session, session_id: int, session: InterviewSession, *, si
         raise _llm_http_error(exc) from exc
     except Exception as exc:
         logger.exception("AI interviewer failed")
-        raise HTTPException(status_code=500, detail=f"AI interviewer failed: {exc}") from exc
+        raise HTTPException(status_code=500, detail="The AI interviewer failed. Please try again.") from exc
 
     if text is None:
         return {"status": "no_speech", "finished": False}
 
-    _finish_if_done(db, session_id, session)
+    _finish_if_done(db, session_id, session, background)
     return _speak(text, finished)
 
 
 @router.post("/{session_id}/end", dependencies=[Depends(require_session_token)])
-def end_session(session_id: int, data: EndRequest | None = None, db: Session = Depends(get_db)):
+def end_session(session_id: int, background: BackgroundTasks, data: EndRequest | None = None,
+                db: Session = Depends(get_db)):
     session = session_manager.get_session(db, session_id)
     if session:
         session.end((data.reason if data else None) or "candidate_ended")
         session_manager.persist(db, session_id, session, close="ended_early")
+        background.add_task(evaluation_service.evaluate_in_background, session_id)
     return {"session_id": session_id, "finished": True}
 
 
@@ -333,7 +353,67 @@ def upload_video(
     db.commit()
     if settings.SUMMARY_AUTO:   # the recording is the last thing the browser sends: everything is in now
         background.add_task(summary_service.generate_summary_in_background, session_id)
-    return {"session_id": session_id, "video_path": stored, "size_bytes": written}
+    return {"session_id": session_id, "size_bytes": written}
+
+
+class VideoUrlRequest(BaseModel):
+    content_type: str = "video/webm"
+
+
+_VIDEO_TYPES = {"video/webm": ".webm", "video/mp4": ".mp4"}
+
+
+@router.post("/{session_id}/video/upload-url", dependencies=[Depends(require_session_token)])
+def video_upload_url(session_id: int, data: VideoUrlRequest, db: Session = Depends(get_db)):
+    """
+    Cloud Run limits a request body to 32 MiB, and interview recordings are bigger than that. In production
+    (STORAGE_BACKEND=gcs) the browser therefore uploads the recording straight to the private bucket with a
+    short-lived signed URL, then calls /video/complete. Locally it just uses the plain /video endpoint.
+    """
+    _get_interview(db, session_id)
+    if not storage.is_gcs():
+        return {"mode": "direct"}
+    base_type = (data.content_type or "").split(";")[0].strip().lower()
+    ext = _VIDEO_TYPES.get(base_type)
+    if not ext or ext not in settings.allowed_video_extensions:
+        raise HTTPException(status_code=400, detail="Unsupported recording format.")
+    max_bytes = settings.MAX_VIDEO_MB * 1024 * 1024
+    uri = storage.upload_target(f"videos/interview_{session_id}{ext}")
+    try:
+        url = storage.signed_url(uri, method="PUT", content_type=base_type,
+                                 headers={"x-goog-content-length-range": f"1,{max_bytes}"})
+    except Exception as exc:
+        logger.exception("Could not create a signed upload URL")
+        raise HTTPException(status_code=500, detail="Could not prepare the recording upload.") from exc
+    return {"mode": "gcs", "url": url, "content_type": base_type,
+            "headers": {"x-goog-content-length-range": f"1,{max_bytes}"}, "max_bytes": max_bytes}
+
+
+@router.post("/{session_id}/video/complete", dependencies=[Depends(require_session_token)])
+def video_upload_complete(session_id: int, data: VideoUrlRequest, background: BackgroundTasks,
+                          db: Session = Depends(get_db)):
+    """The browser finished its direct upload: verify the object really exists, then record the reference."""
+    interview = _get_interview(db, session_id)
+    if not storage.is_gcs():
+        raise HTTPException(status_code=400, detail="Direct upload is not enabled.")
+    ext = _VIDEO_TYPES.get((data.content_type or "").split(";")[0].strip().lower())
+    if not ext:
+        raise HTTPException(status_code=400, detail="Unsupported recording format.")
+    uri = storage.upload_target(f"videos/interview_{session_id}{ext}")   # derived server-side, never from the client
+    try:
+        size = storage.object_size(uri)
+    except Exception as exc:
+        logger.exception("Could not verify the uploaded recording")
+        raise HTTPException(status_code=500, detail="Could not verify the recording.") from exc
+    if not size:
+        raise HTTPException(status_code=400, detail="The recording was not found. Please upload it again.")
+    interview.video_path = uri
+    interview.video_size_bytes = size
+    interview.video_uploaded_at = datetime.utcnow()
+    db.commit()
+    if settings.SUMMARY_AUTO:
+        background.add_task(summary_service.generate_summary_in_background, session_id)
+    return {"session_id": session_id, "size_bytes": size}
 
 
 # ---------------------------------------------------------
@@ -352,7 +432,7 @@ def result(session_id: int, db: Session = Depends(get_db)):
         "ended_at": interview.ended_at,
         "settings": interview.settings_snapshot,
         "transcript": interview.transcript or [],
-        "video_path": interview.video_path,
+        "has_recording": bool(interview.video_path),
         "video_size_bytes": interview.video_size_bytes,
         "summary": interview.summary,
         "events": [

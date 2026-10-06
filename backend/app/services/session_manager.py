@@ -6,9 +6,10 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db.models import Candidate, Interview
-from app.providers.ollama_provider import get_llm
+from app.db.models import Candidate, Interview, Job
+from app.providers.factory import get_llm
 from app.services.interview_service import InterviewSession, InterviewSettings
+from app.services import candidate_service
 from app.services.resume_service import analyze_resume, resume_text_for_prompt
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,19 @@ def _prompt_resume_text(candidate: Candidate) -> str | None:
     return None
 
 
+def _job_context(db: Session, job_id: int | None) -> dict | None:
+    job = db.get(Job, job_id) if job_id else None
+    if not job:
+        return None
+    return {"title": job.title, "description": job.description, "location": job.location,
+            "skills": job.required_skills or []}
+
+
+def _candidate_info(candidate: Candidate) -> dict:
+    return {"location": candidate.location, "experience_years": candidate.experience_years,
+            "skills": candidate.skills or []}
+
+
 def ensure_resume_profile(db: Session, candidate: Candidate) -> None:
     """Analyse the resume once and cache the structured profile on the candidate."""
     if candidate.resume_profile:
@@ -45,6 +59,7 @@ def create_session(db: Session, candidate: Candidate) -> tuple[Interview, Interv
     cfg = InterviewSettings.from_config()
     interview = Interview(
         candidate_id=candidate.id,
+        job_id=candidate.job_id,
         status="running",
         transcript=[],
         settings_snapshot=cfg.to_dict(),
@@ -52,6 +67,7 @@ def create_session(db: Session, candidate: Candidate) -> tuple[Interview, Interv
         access_token=secrets.token_urlsafe(32),
     )
     db.add(interview)
+    candidate_service.mark_started(db, candidate, interview)
     db.commit()
     db.refresh(interview)
 
@@ -61,6 +77,8 @@ def create_session(db: Session, candidate: Candidate) -> tuple[Interview, Interv
         candidate.resume_profile,
         _prompt_resume_text(candidate),
         started_at=interview.started_at,
+        job=_job_context(db, candidate.job_id),
+        candidate_info=_candidate_info(candidate),
     )
     SESSIONS[interview.id] = session
     return interview, session
@@ -86,6 +104,8 @@ def get_session(db: Session, interview_id: int) -> InterviewSession | None:
         _prompt_resume_text(candidate),
         transcript=interview.transcript or [],
         started_at=interview.started_at,
+        job=_job_context(db, interview.job_id or candidate.job_id),
+        candidate_info=_candidate_info(candidate),
     )
     SESSIONS[interview_id] = session
     logger.info("Restored interview session %s from the database", interview_id)
@@ -98,9 +118,13 @@ def persist(db: Session, interview_id: int, session: InterviewSession, *, close:
     if not interview:
         return
     interview.transcript = session.public_transcript()
+    candidate_service.sync_turns(db, interview, interview.transcript)
     if close:
         interview.status = close
         interview.end_reason = session.end_reason
         interview.ended_at = datetime.utcnow()
+        candidate = db.get(Candidate, interview.candidate_id)
+        if candidate:
+            candidate_service.mark_finished(db, candidate)
         SESSIONS.pop(interview_id, None)
     db.commit()

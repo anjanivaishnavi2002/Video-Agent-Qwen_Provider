@@ -1,11 +1,22 @@
 // Local dev: the backend on port 8000. Docker/production builds set VITE_API_URL=/api
 // so the browser talks to the same origin and the web server proxies to the backend.
-export const API_BASE_URL =
-  import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
+// Cloud Run: the web container writes /config.json at start (API_URL=...) and main.jsx loads it before the app, so
+// ONE image works in every environment. Otherwise the build-time VITE_API_URL, then local dev.
+export const API_BASE_URL = (
+  (typeof window !== "undefined" && window.__APP_CONFIG__?.API_URL) ||
+  import.meta.env.VITE_API_URL ||
+  "http://127.0.0.1:8000"
+).replace(/\/$/, "");
 
 // Secret issued by the backend when the interview starts. Every later call for
 // that interview must present it.
 let sessionToken = null;
+
+// Secret from the candidate's application / invitation link. Needed to start an interview.
+let inviteToken = null;
+export function setInviteToken(token) {
+  inviteToken = token || null;
+}
 
 function authHeaders(extra = {}) {
   return sessionToken ? { ...extra, "X-Session-Token": sessionToken } : extra;
@@ -88,11 +99,35 @@ export async function getConsent() {
   return response.json();
 }
 
+export async function getOpenJobs() {
+  const response = await request("/jobs", undefined, "Could not load open positions");
+  return response.json();
+}
+
+// What the invitation link in an e-mail / SMS resolves to.
+export async function getInvitation(token) {
+  const response = await request(
+    `/candidates/invite/${encodeURIComponent(token)}`,
+    undefined,
+    "This invitation link is not valid."
+  );
+  return response.json();
+}
+
 // `consentVersion` proves which consent form the candidate accepted.
-export async function uploadResume(name, file, consentVersion) {
+// `details` = { email, phone, location, experienceYears, skills, jobId }
+export async function uploadResume(name, file, consentVersion, details = {}) {
   const formData = new FormData();
   formData.append("name", name);
   formData.append("consent_version", consentVersion);
+  formData.append("email", details.email || "");
+  if (details.phone) formData.append("phone", details.phone);
+  if (details.location) formData.append("location", details.location);
+  if (details.experienceYears !== undefined && details.experienceYears !== "") {
+    formData.append("experience_years", details.experienceYears);
+  }
+  if (details.skills) formData.append("skills", details.skills);
+  if (details.jobId) formData.append("job_id", details.jobId);
   formData.append("file", file);
 
   const response = await request(
@@ -100,7 +135,9 @@ export async function uploadResume(name, file, consentVersion) {
     { method: "POST", body: formData },
     "Resume upload failed"
   );
-  return response.json();
+  const data = await response.json();
+  inviteToken = data.invite_token || inviteToken;
+  return data;
 }
 
 // ---------------------------------------------------------
@@ -113,7 +150,7 @@ export async function startInterview(candidateId) {
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ candidate_id: candidateId }),
+      body: JSON.stringify({ candidate_id: candidateId, invite_token: inviteToken }),
     },
     "Could not start interview"
   );
@@ -177,10 +214,48 @@ export async function sendEvents(sessionId, events) {
 }
 
 // Upload the recording of the whole interview (camera + microphone).
+// Production (Cloud Run limits request bodies to 32 MiB): the backend hands out a short-lived signed URL and the
+// browser uploads straight to the private bucket. Locally the plain multipart endpoint is used.
 export async function uploadVideo(sessionId, videoBlob) {
+  const contentType = (videoBlob.type || "video/webm").split(";")[0];
+  const plan = await (
+    await request(
+      `/session/${sessionId}/video/upload-url`,
+      {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ content_type: contentType }),
+      },
+      "Could not prepare the recording upload"
+    )
+  ).json();
+
+  if (plan.mode === "gcs") {
+    let put;
+    try {
+      put = await fetch(plan.url, {
+        method: "PUT",
+        headers: { "Content-Type": plan.content_type, ...plan.headers },
+        body: videoBlob,
+      });
+    } catch {
+      throw new Error("Video upload failed (network).");
+    }
+    if (!put.ok) throw new Error("Video upload failed");
+    const done = await request(
+      `/session/${sessionId}/video/complete`,
+      {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ content_type: plan.content_type }),
+      },
+      "Video upload failed"
+    );
+    return done.json();
+  }
+
   const formData = new FormData();
   formData.append("video", videoBlob, videoFileName(videoBlob));
-
   const response = await request(
     `/session/${sessionId}/video`,
     { method: "POST", headers: authHeaders(), body: formData },

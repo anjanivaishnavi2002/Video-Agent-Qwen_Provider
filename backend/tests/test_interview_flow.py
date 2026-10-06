@@ -13,8 +13,10 @@ import tempfile
 from pathlib import Path
 
 _tmp = tempfile.mkdtemp()
-os.environ["DATABASE_URL"] = f"sqlite:///{_tmp}/test.db"
-os.environ["UPLOAD_DIR"] = f"{_tmp}/uploads"
+os.environ.setdefault("DATABASE_URL", f"sqlite:///{_tmp}/test.db")
+os.environ.setdefault("UPLOAD_DIR", f"{_tmp}/uploads")
+os.environ.setdefault("AUTO_CREATE_SCHEMA", "true")
+os.environ.setdefault("JWT_SECRET", "test-secret-test-secret-test-secret-123456")
 os.environ["MIN_TURNS_BEFORE_END"] = "2"
 os.environ["MAX_TURNS"] = "5"
 os.environ["EMPTY_BEFORE_REPROMPT"] = "2"
@@ -58,6 +60,10 @@ class FakeLLM:
                     "tools_and_systems": ["Zendesk"],
                 }
             )
+        if schema and "overall_score" in schema.get("properties", {}):                  # final evaluation
+            return json.dumps({"overall_score": 72, "recommendation": "fit", "summary": "Solid voice experience.",
+                               "strengths": ["Voice support experience"], "concerns": ["Limited detail"],
+                               "criteria": [{"name": "Communication", "score": 70, "evidence": "Clear answers"}]})
         if "Begin the interview" in last:
             return json.dumps({"learned": "", "topic": "introduction", "move": "opening",
                                "end_interview": False,
@@ -76,7 +82,7 @@ class FakeLLM:
                            "end_interview": self.end_early, "spoken_text": f"Question number {turn}?"})
 
     def chat_json(self, messages, schema, **kw):
-        from app.providers.ollama_provider import parse_json_loosely
+        from app.providers.gemini_provider import parse_json_loosely
         return parse_json_loosely(self.chat(messages, schema=schema, **kw))
 
 
@@ -104,8 +110,10 @@ class AuthClient(TestClient):
 def env():
     from app.services import session_manager, voice_service, interview_service
     fake = FakeLLM()
+    from app.services import evaluation_service
     session_manager.get_llm = lambda: fake
     interview_service.get_llm = lambda: fake
+    evaluation_service.get_llm = lambda: fake
 
     transcripts = iter([])
     state = {"texts": []}
@@ -117,10 +125,15 @@ def env():
         yield client, fake, state, session_manager
 
 
-def _upload(client, name="Ravi", text=RESUME, filename="cv.txt", consent=True):
+def _upload(client, name="Ravi", text=RESUME, filename="cv.txt", consent=True, email="ravi@example.com", **extra):
     version = client.get("/config/consent").json()["version"] if consent else "wrong"
-    return client.post("/resume/upload", data={"name": name, "consent_version": version},
-                       files={"file": (filename, text.encode())})
+    return client.post("/resume/upload", data={"name": name, "consent_version": version, "email": email,
+                                               **extra}, files={"file": (filename, text.encode())})
+
+
+def _start(client, cand):
+    return client.post("/session/start", json={"candidate_id": cand["candidate_id"],
+                                               "invite_token": cand["invite_token"]})
 
 
 def _voice(client, sid, data=b"audio"):
@@ -144,7 +157,7 @@ def test_resume_validation(env):
 def test_full_interview(env):
     client, fake, state, sm = env
     cand = _upload(client).json()
-    started = client.post("/session/start", json={"candidate_id": cand["candidate_id"]}).json()
+    started = _start(client, cand).json()
     sid = started["session_id"]
 
     # audio only, no question text leaks to the client
@@ -154,7 +167,7 @@ def test_full_interview(env):
     # system prompt is built from the resume + candidate, contains no job
     system = fake.calls[-1][0]["content"]
     assert "Ravi" in system and "Zendesk" in system and "Acme Telecom" in system
-    assert "JOB" not in system.upper().replace("JOB-", "")
+    assert "No specific job was provided" in system
     # grounding removed the invented items
     profile = sm.SESSIONS[sid].system_prompt
     assert "Kubernetes" not in profile and "Pilot" not in profile and "Sky Air" not in profile
@@ -193,7 +206,7 @@ def test_full_interview(env):
 def test_empty_audio_and_silence_paths(env):
     client, fake, state, sm = env
     cand = _upload(client).json()
-    sid = client.post("/session/start", json={"candidate_id": cand["candidate_id"]}).json()["session_id"]
+    sid = _start(client, cand).json()["session_id"]
 
     state["texts"] += ["", ""]                       # first empty -> keep listening
     assert _voice(client, sid).json() == {"status": "no_speech", "finished": False}
@@ -212,7 +225,7 @@ def test_empty_audio_and_silence_paths(env):
 def test_restore_after_restart_events_and_video(env):
     client, fake, state, sm = env
     cand = _upload(client).json()
-    sid = client.post("/session/start", json={"candidate_id": cand["candidate_id"]}).json()["session_id"]
+    sid = _start(client, cand).json()["session_id"]
     _voice(client, sid)
 
     sm.SESSIONS.clear()                              # simulate server restart
@@ -257,7 +270,7 @@ def test_access_control_and_gcs_storage(env, monkeypatch):
     from app.services import storage
 
     cand = _upload(client).json()
-    sid = client.post("/session/start", json={"candidate_id": cand["candidate_id"]}).json()["session_id"]
+    sid = _start(client, cand).json()["session_id"]
 
     # no token / wrong token -> rejected on every candidate endpoint
     for method, path, kw in [
@@ -293,7 +306,11 @@ def test_access_control_and_gcs_storage(env, monkeypatch):
     monkeypatch.setattr(settings, "STORAGE_BACKEND", "gcs")
     monkeypatch.setattr(settings, "GCS_BUCKET", "my-bucket")
     up = client.post(f"/session/{sid}/video", files={"video": ("interview.webm", b"v" * 100, "video/webm")}).json()
-    assert up["video_path"] == f"gs://my-bucket/video-agent/videos/interview_{sid}.webm"
+    from app.db.database import SessionLocal
+    from app.db.models import Interview
+    with SessionLocal() as db:
+        assert db.get(Interview, sid).video_path == f"gs://my-bucket/video-agent/videos/interview_{sid}.webm"
+    assert "video_path" not in up
     assert uploaded[f"video-agent/videos/interview_{sid}.webm"] == (b"v" * 100, "video/webm")
     assert not Path(settings.UPLOAD_DIR, "videos", f"interview_{sid}.webm").exists()
     res = _upload(client, name="Gcs").json()
@@ -310,7 +327,7 @@ def test_consent_form_and_recording(env):
 
     # a wrong / missing consent version is refused, nothing is stored
     assert _upload(client, consent=False).status_code == 400
-    assert client.post("/resume/upload", data={"name": "X"}, files={"file": ("cv.txt", RESUME.encode())}).status_code == 422
+    assert client.post("/resume/upload", data={"name": "X", "email": "x@y.com"}, files={"file": ("cv.txt", RESUME.encode())}).status_code == 422
 
     ok = _upload(client)
     assert ok.status_code == 200

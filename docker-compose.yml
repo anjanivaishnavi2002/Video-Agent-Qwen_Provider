@@ -1,3 +1,5 @@
+# LEGACY single-VM stack (Qwen on Ollama + Caddy). The Google Cloud / Vertex AI / Cloud Run setup is described in
+# docs/DEPLOYMENT.md; for local Docker use docker-compose.dev.yml.
 # Production stack for ONE Compute Engine VM.
 #   web      Caddy: React app + HTTPS + /api proxy
 #   backend  FastAPI + Faster-Whisper (speech-to-text) + Piper (text-to-speech)
@@ -15,6 +17,7 @@ services:
     image: ${REGISTRY:-video-agent}/web:${TAG:-latest}
     build:
       context: ./frontend
+      dockerfile: Dockerfile.caddy
       args:
         VITE_API_URL: /api
     ports:

@@ -5,8 +5,9 @@ import uuid
 from pathlib import Path
 
 from app.config import settings
+from typing import Any
+
 from app.prompts.interviewer import load_prompts, render
-from app.providers.ollama_provider import OllamaProvider
 from app.providers.llm_errors import LLMResponseError
 
 logger = logging.getLogger(__name__)
@@ -29,8 +30,31 @@ def validate_upload(filename: str, size_bytes: int) -> str:
     return ext
 
 
+_CONTENT_TYPES = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".txt": "text/plain",
+}
+
+
+def content_type_for(ext: str) -> str:
+    return _CONTENT_TYPES.get(ext.lower(), "application/octet-stream")
+
+
+def check_signature(ext: str, data: bytes) -> None:
+    """The file must really be what its extension says (a renamed .exe is rejected)."""
+    if ext == ".pdf" and not data.lstrip()[:5] == b"%PDF-":
+        raise ValueError("This file is not a valid PDF.")
+    if ext == ".docx" and not data[:4] == b"PK\x03\x04":
+        raise ValueError("This file is not a valid Word (.docx) document.")
+    if ext == ".txt":
+        if b"\x00" in data[:4096]:
+            raise ValueError("This file is not a plain-text document.")
+
+
 def save_upload(filename: str, data: bytes) -> str:
     ext = validate_upload(filename, len(data))
+    check_signature(ext, data)
     folder = Path(settings.UPLOAD_DIR) / settings.RESUME_SUBDIR
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"{uuid.uuid4().hex}{ext}"
@@ -214,7 +238,7 @@ def _split_chunks(text: str, size: int) -> list[str]:
     return chunks
 
 
-def analyze_resume(text: str, llm: OllamaProvider) -> dict | None:
+def analyze_resume(text: str, llm: Any) -> dict | None:
     """
     Build a structured, grounded profile of the resume.
 

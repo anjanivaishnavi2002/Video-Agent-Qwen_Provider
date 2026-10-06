@@ -14,7 +14,7 @@ from app.config import settings
 from app.db.database import SessionLocal
 from app.db.models import Candidate, Interview
 from app.prompts.interviewer import load_prompts, render
-from app.providers import ollama_provider
+from app.providers import factory
 from app.providers.llm_errors import LLMError
 
 logger = logging.getLogger(__name__)
@@ -97,7 +97,7 @@ EVENT_NOTE = (
 
 
 def get_llm():
-    return ollama_provider.get_llm()
+    return factory.get_llm()
 
 
 def format_transcript(transcript: list[dict]) -> str:

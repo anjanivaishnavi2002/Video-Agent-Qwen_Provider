@@ -16,6 +16,10 @@ services:
 
   backend:
     environment:
+      # Local/test stack: self-hosted Qwen (the ollama service from docker-compose.yml) by default.
+      # For Gemini instead put LLM_PROVIDER=gemini and GEMINI_API_KEY=... in .env (never baked into an image).
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/video_agent
       STORAGE_BACKEND: local
       ENABLE_DEBUG_ENDPOINTS: "true"

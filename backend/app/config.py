@@ -2,11 +2,12 @@
 Central configuration for the AI Video Interview backend.
 
 Voice is always Whisper (speech-to-text) on the server -> LLM -> Piper (text-to-speech) on the server.
-The LLM is Qwen, either self-hosted with Ollama (LLM_PROVIDER=ollama, default) or on Vertex AI (LLM_PROVIDER=vertex).
+The LLM is Gemini on Google Cloud Vertex AI (LLM_PROVIDER=gemini, default; Application Default Credentials, no API key).
+LLM_PROVIDER=ollama keeps a fully offline self-hosted option for development.
 The rest of the app uses settings.active_model.
 """
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -43,36 +44,59 @@ class Settings(BaseSettings):
         return value
 
     # ================================================================
-    # LLM (Qwen)
+    # RUNTIME
     # ================================================================
 
-    # ollama -> Qwen on this server/VM (container)     vertex -> Qwen on Google Cloud Vertex AI
-    LLM_PROVIDER: str = "ollama"
+    ENVIRONMENT: str = "development"        # development | production
+    LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: str = "text"                # text | json (json = Cloud Logging friendly)
 
-    # ---- Vertex AI (LLM_PROVIDER=vertex) -----------------------------------
-    # Auth is the VM's service account (no key): give it the "Vertex AI User" role + the cloud-platform scope.
-    VERTEX_PROJECT_ID: str = ""            # empty = the project of the VM's credentials
-    VERTEX_LOCATION: str = "us-central1"   # region of the model / endpoint (or "global")
-    VERTEX_MODEL: str = ""                 # model id copied from Model Garden
-    VERTEX_ENDPOINT_ID: str = ""           # only for a model you deployed yourself; empty = managed Model Garden API
-    VERTEX_BASE_URL: str = ""              # optional full override of the OpenAI-compatible base URL
-    VERTEX_JSON_MODE: str = "json_object"  # json_object | json_schema | none  (how JSON replies are requested)
-    VERTEX_TIMEOUT_SECONDS: float = 60.0
+    # ================================================================
+    # LLM
+    # ================================================================
 
-    # ---- Self-hosted Qwen (LLM_PROVIDER=ollama) ----------------------------
+    # gemini -> Gemini on Google Cloud Vertex AI (Application Default Credentials, no API key)
+    # ollama -> self-hosted model through Ollama (offline development only)
+    # "vertex" is accepted as an alias of "gemini".
+    LLM_PROVIDER: str = "gemini"
+
+    # ---- Vertex AI (LLM_PROVIDER=gemini) -----------------------------------
+    # Production: the Cloud Run service account needs roles/aiplatform.user (no key file anywhere).
+    # Local dev:  run `gcloud auth application-default login`.
+    GOOGLE_CLOUD_PROJECT: str = _alias("", "GOOGLE_CLOUD_PROJECT", "VERTEX_PROJECT_ID")
+    GOOGLE_CLOUD_LOCATION: str = _alias("us-central1", "GOOGLE_CLOUD_LOCATION", "VERTEX_LOCATION")
+    VERTEX_AI_MODEL: str = _alias("gemini-2.5-flash", "VERTEX_AI_MODEL", "VERTEX_MODEL")
+    LLM_FALLBACK_MODEL: str = ""            # optional second model tried when the primary is overloaded
+    LLM_TIMEOUT_SECONDS: float = 60.0
+    LLM_THINKING_LEVEL: str = ""            # Gemini 3.x: minimal|low|medium|high ("" = model default)
+    LLM_THINKING_BUDGET: int = -1           # Gemini 2.5: token budget (-1 = model default, 0 = off if supported)
+    LLM_SEND_SAMPLING_PARAMS: bool = True   # send temperature/top_p (set false for models that deprecate them)
+
+    # ---- Gemini Live (real-time voice interview) ---------------------------
+    # live = the candidate's voice streams to Gemini Live and its voice streams back (default).
+    # turn = legacy turn-based flow (Whisper -> Gemini text -> Piper); also what scoring/summaries use for text.
+    INTERVIEW_MODE: str = "live"
+    GEMINI_LIVE_MODEL: str = "gemini-3.8-live"
+    GEMINI_LIVE_LOCATION: str = "us-central1"       # Live API is not served from every region; keep separate from the text location
+    GEMINI_LIVE_VOICE: str = "Aoede"                # prebuilt voice name
+    LIVE_AUTH_TIMEOUT_SECONDS: float = 10.0
+    LIVE_GRACE_SECONDS: int = 120                   # after the planned duration, hard stop
+
+    # ---- Self-hosted model (LLM_PROVIDER=ollama) ----------------------------
+    ENABLE_OLLAMA: bool = False                     # Qwen/Ollama is DISABLED unless this is true; Gemini is always used otherwise
     OLLAMA_HOST: str = "http://localhost:11434"     # docker compose sets http://ollama:11434
     OLLAMA_MODEL: str = "qwen2.5:3b-instruct"
     OLLAMA_KEEP_ALIVE: str = "30m"                  # keep the model in memory between turns
     OLLAMA_NUM_CTX: int = 4096
     OLLAMA_TIMEOUT_SECONDS: float = 180.0           # CPU: the first reply after a restart is slow
 
-    # Optional explicit override of the model name (OLLAMA_MODEL / VERTEX_MODEL). Normally leave empty.
+    # Optional explicit override of the model name (OLLAMA_MODEL / VERTEX_AI_MODEL). Normally leave empty.
     LLM_MODEL: str = ""
 
     # Generation settings.
     LLM_TEMPERATURE: float = 0.7
     LLM_TOP_P: float = 0.9
-    LLM_MAX_TOKENS: int = 1024
+    LLM_MAX_TOKENS: int = 2048    # on Gemini, thinking tokens count toward this
 
     # Automatic retry configuration (connection problems / timeouts).
     LLM_MAX_RETRIES: int = 3
@@ -171,7 +195,9 @@ class Settings(BaseSettings):
     # gcs   -> Google Cloud Storage
     STORAGE_BACKEND: str = "local"
 
-    GCS_BUCKET: str = ""
+    GCS_BUCKET: str = _alias("", "GCS_BUCKET_NAME", "GCS_BUCKET")
+    GCS_SIGNING_SERVICE_ACCOUNT: str = ""     # Cloud Run service account email used to sign URLs (IAM signBlob)
+    SIGNED_URL_TTL_SECONDS: int = 600
 
     GCS_PREFIX: str = "video-agent"
 
@@ -292,9 +318,44 @@ class Settings(BaseSettings):
     # SECURITY
     # ================================================================
 
+    # Legacy shared key for the session read endpoints. Leave EMPTY in production: use admin login instead.
     ADMIN_API_KEY: str = ""
 
-    ENABLE_DEBUG_ENDPOINTS: bool = True
+    ENABLE_DEBUG_ENDPOINTS: bool = False
+
+    # Admin authentication (separate from the candidate flow)
+    JWT_SECRET: str = ""                    # >= 32 random chars; Secret Manager in production
+    JWT_ALGORITHM: str = "HS256"
+    ADMIN_TOKEN_EXPIRE_MINUTES: int = 60
+    LOGIN_MAX_ATTEMPTS: int = 5             # per e-mail + client IP, per window
+    LOGIN_WINDOW_SECONDS: int = 300
+    # Optional first admin, created on startup only when NO admin exists yet (prefer scripts/create_admin.py)
+    ADMIN_BOOTSTRAP_EMAIL: str = ""
+    ADMIN_BOOTSTRAP_PASSWORD: str = ""
+
+    # Candidates
+    MAX_INTERVIEW_ATTEMPTS: int = 3
+
+    # ================================================================
+    # NOTIFICATIONS (separate Cloud Run service)
+    # ================================================================
+
+    NOTIFICATIONS_ENABLED: bool = True
+    NOTIFICATION_SERVICE_URL: str = ""      # e.g. https://notification-service-xxxx.run.app
+    NOTIFICATION_SERVICE_TOKEN: str = ""    # shared bearer secret (Secret Manager)
+    NOTIFICATION_AUTH_MODE: str = "token"   # token | iam | both | none  (iam = Google ID token for Cloud Run IAM)
+    NOTIFICATION_TIMEOUT_SECONDS: float = 10.0
+    FRONTEND_BASE_URL: str = "http://localhost:5173"   # used to build candidate links
+
+    # ================================================================
+    # SCHEMA MANAGEMENT
+    # ================================================================
+
+    # development/tests: create tables directly. production: run `alembic upgrade head` (Cloud Run Job).
+    AUTO_CREATE_SCHEMA: bool = False
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 5
+    DB_POOL_RECYCLE_SECONDS: int = 1800
 
     # ================================================================
     # DATABASE CONNECTION
@@ -324,9 +385,43 @@ class Settings(BaseSettings):
     @property
     def active_model(self) -> str:
         """LLM_MODEL if set, otherwise the model of the selected provider."""
-        if self.LLM_PROVIDER.strip().lower() == "vertex":
-            return self.LLM_MODEL.strip() or self.VERTEX_MODEL.strip()
-        return self.LLM_MODEL.strip() or self.OLLAMA_MODEL.strip()
+        if self.llm_backend == "ollama":
+            return self.LLM_MODEL.strip() or self.OLLAMA_MODEL.strip()
+        return self.LLM_MODEL.strip() or self.VERTEX_AI_MODEL.strip()
+
+    @property
+    def llm_backend(self) -> str:
+        value = self.LLM_PROVIDER.strip().lower()
+        if value == "ollama" and self.ENABLE_OLLAMA:
+            return "ollama"
+        return "gemini"                              # Qwen/Ollama is disabled by default (ENABLE_OLLAMA=false)
+
+    @property
+    def live_mode(self) -> bool:
+        return self.INTERVIEW_MODE.strip().lower() == "live"
+
+    @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT.strip().lower() == "production"
+
+    @model_validator(mode="after")
+    def _production_guards(self):
+        if not self.is_production:
+            return self
+        problems = []
+        if len(self.JWT_SECRET) < 32:
+            problems.append("JWT_SECRET must be at least 32 characters")
+        if any(o.strip() == "*" for o in self.CORS_ORIGINS.split(",")):
+            problems.append("CORS_ORIGINS must list the frontend origin(s), not '*'")
+        if self.STORAGE_BACKEND.lower() != "gcs":
+            problems.append("STORAGE_BACKEND must be 'gcs'")
+        if self.ENABLE_DEBUG_ENDPOINTS:
+            problems.append("ENABLE_DEBUG_ENDPOINTS must be false")
+        if self.AUTO_CREATE_SCHEMA:
+            problems.append("AUTO_CREATE_SCHEMA must be false (use Alembic migrations)")
+        if problems:
+            raise ValueError("Unsafe production configuration: " + "; ".join(problems))
+        return self
 
     @property
     def cors_origins_list(self) -> list[str]:

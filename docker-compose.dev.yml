@@ -1,0 +1,65 @@
+# LOCAL development with Docker: Postgres + backend + notification-service + frontend.
+#   gcloud auth application-default login          (Gemini through Vertex AI; no API key)
+#   cp backend/.env.example .env  &&  edit GOOGLE_CLOUD_PROJECT and JWT_SECRET
+#   docker compose -f docker-compose.dev.yml up --build
+#   docker compose -f docker-compose.dev.yml run --rm backend python -m scripts.create_admin --email you@example.com
+# Frontend http://localhost:8080   Admin http://localhost:8080/admin/login   API http://localhost:8000
+name: video-agent-dev
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: video_agent
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d video_agent"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PORT: "8000"
+      ENVIRONMENT: development
+      LOG_FORMAT: text
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/video_agent
+      RUN_MIGRATIONS: "true"                      # local convenience; production uses a Cloud Run Job
+      AUTO_CREATE_SCHEMA: "false"
+      CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
+      FRONTEND_BASE_URL: http://localhost:8080
+      NOTIFICATION_SERVICE_URL: http://notification:8081
+      NOTIFICATION_SERVICE_TOKEN: dev-notification-token
+      GOOGLE_APPLICATION_CREDENTIALS: /adc/application_default_credentials.json
+    volumes:
+      # Your local Application Default Credentials (read-only). Windows: %APPDATA%\gcloud
+      - ${GCLOUD_ADC_DIR:-~/.config/gcloud}:/adc:ro
+    ports: ["8000:8000"]
+    depends_on:
+      db: {condition: service_healthy}
+
+  notification:
+    build: ./notification-service
+    environment:
+      PORT: "8081"
+      NOTIFICATION_API_TOKEN: dev-notification-token
+      EMAIL_PROVIDER: console                      # logs instead of sending
+      SMS_PROVIDER: console
+      ORGANIZATION_NAME: Your Company
+    ports: ["8081:8081"]
+
+  frontend:
+    build: ./frontend
+    environment:
+      PORT: "8080"
+      API_URL: http://localhost:8000
+    ports: ["8080:8080"]
+    depends_on: [backend]
+
+volumes:
+  pgdata:

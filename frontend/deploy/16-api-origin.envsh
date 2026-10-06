@@ -1,0 +1,3 @@
+# Sourced by the nginx entrypoint BEFORE the template is rendered: the API origin goes into the CSP connect-src.
+API_ORIGIN="${API_URL:-}"
+export API_ORIGIN

@@ -10,7 +10,7 @@ import json
 import httpx
 import pytest
 
-from tests.test_interview_flow import AuthClient, RESUME, _upload, _voice  # noqa: F401  (also sets the test env)
+from tests.test_interview_flow import AuthClient, RESUME, _start, _upload, _voice  # noqa: F401  (also sets the test env)
 
 from app.config import settings
 from app.providers import ollama_provider
@@ -47,6 +47,8 @@ class FakeOllama:
 def qwen(monkeypatch):
     from app.services import interview_service, session_manager, voice_service
     fake = FakeOllama()
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "ollama")
+    monkeypatch.setattr(settings, "ENABLE_OLLAMA", True)
     monkeypatch.setattr(settings, "OLLAMA_MODEL", "qwen2.5:3b-instruct")
     provider = ollama_provider.OllamaProvider()
     provider._http = httpx.Client(transport=httpx.MockTransport(fake))
@@ -62,16 +64,15 @@ def qwen(monkeypatch):
 def test_public_config_and_health_describe_the_qwen_setup(qwen):
     client, _ = qwen
     assert "voice_mode" not in client.get("/config/public").json()
-    health = client.get("/health").json()
-    assert health["llm_provider"] == "ollama" and health["llm_model"] == "qwen2.5:3b-instruct"
+    assert client.get("/health").json() == {"status": "healthy"}
     assert client.post("/session/start-live", json={"candidate_id": 1}).status_code in (404, 405)
 
 
 def test_a_full_interview_runs_on_qwen(qwen):
     client, fake = qwen
-    candidate = _upload(client).json()["candidate_id"]
+    candidate = _upload(client).json()
 
-    started = client.post("/session/start", json={"candidate_id": candidate})
+    started = _start(client, candidate)
     assert started.status_code == 200, started.text
     sid = started.json()["session_id"]
     assert started.json().get("audio_base64")                 # the greeting is spoken (Piper stand-in)
@@ -103,7 +104,7 @@ def test_model_down_returns_a_clear_503_not_a_fake_answer(qwen, monkeypatch):
     broken._http = httpx.Client(transport=httpx.MockTransport(down))
     monkeypatch.setattr(settings, "LLM_MAX_RETRIES", 0)
     monkeypatch.setattr(session_manager, "get_llm", lambda: broken)
-    candidate = _upload(client).json()["candidate_id"]
-    response = client.post("/session/start", json={"candidate_id": candidate})
+    candidate = _upload(client).json()
+    response = _start(client, candidate)
     assert response.status_code == 503
     assert "ollama" in response.json()["detail"].lower()
