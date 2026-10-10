@@ -10,7 +10,8 @@ router = APIRouter(prefix="/config", tags=["config"])
 def public_config():
     """Non-secret settings the browser needs. Single source of truth for the frontend."""
     return {
-        "interviewer_name": settings.INTERVIEWER_NAME,
+        "interviewer_name": settings.interviewer_names[0],
+        "interviewer_names": settings.interviewer_names,
         "interview_type": settings.INTERVIEW_TYPE,
         "interview_minutes": settings.INTERVIEW_DURATION_MINUTES,
         "resume": {

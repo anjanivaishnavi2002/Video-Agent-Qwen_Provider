@@ -1,5 +1,6 @@
 """Keeps live InterviewSession objects in memory and mirrors them to the database."""
 import logging
+import random
 import secrets
 from datetime import datetime
 
@@ -57,6 +58,7 @@ def create_session(db: Session, candidate: Candidate) -> tuple[Interview, Interv
     ensure_resume_profile(db, candidate)
 
     cfg = InterviewSettings.from_config()
+    cfg.interviewer_name = random.choice(settings.interviewer_names)   # fixed for this interview via the snapshot
     interview = Interview(
         candidate_id=candidate.id,
         job_id=None if candidate.account_id else candidate.job_id,   # signed-in candidates: one resume-based interview

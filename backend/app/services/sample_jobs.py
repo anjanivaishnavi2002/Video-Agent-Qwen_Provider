@@ -1,4 +1,4 @@
-"""30 sample BPO jobs (fresher to team-lead) an admin can add with one click. Idempotent: matched by title."""
+"""50 sample BPO jobs (fresher to head of function) an admin can add with one click. Idempotent: matched by title."""
 from sqlalchemy.orm import Session
 
 from app.db.models import Job
@@ -100,6 +100,67 @@ SAMPLES = [
     ("Head of Training & Quality", "Training", "Bengaluru", "other", 10, 20,
      "Lead the training and quality function for several accounts, set the curriculum and own certification and "
      "audit standards.", ["Leadership", "Curriculum design", "Quality frameworks", "Stakeholder management"]),
+    # ---- 2 to 3 years (20 more) ----------------------------------------------------------------------------------
+    ("Customer Support Executive - Voice (International)", "Customer Support", "Hyderabad", "voice", 2, 3,
+     "Handle inbound calls for a US telecom client during night shifts, resolve plan and billing issues and keep "
+     "CSAT above target.", ["Neutral accent", "English", "CRM", "De-escalation"]),
+    ("Chat Support Specialist - E-commerce", "Customer Support", "Bengaluru", "chat", 2, 3,
+     "Handle three parallel chats for a marketplace client: orders, returns and refunds, with a strict first-response "
+     "time.", ["Written English", "Multitasking", "Order management", "CRM"]),
+    ("Email Support Specialist - SaaS", "Customer Support", "Pune", "email", 2, 3,
+     "Resolve technical and billing emails for a software client, write original replies and escalate bugs to "
+     "engineering with clear notes.", ["Written English", "Ticketing tools", "Troubleshooting", "Documentation"]),
+    ("Technical Support Associate - Broadband", "Technical Support", "Chennai", "voice", 2, 3,
+     "Troubleshoot internet, router and Wi-Fi problems on calls and book engineer visits when needed.",
+     ["Networking basics", "Troubleshooting", "English", "Empathy"]),
+    ("Technical Support Specialist - Chat & Email", "Technical Support", "Hyderabad", "blended", 2, 3,
+     "Support software customers by chat and email, reproduce issues, follow runbooks and raise tickets for L2.",
+     ["Troubleshooting", "Written English", "Ticketing tools", "Knowledge base"]),
+    ("Banking Customer Service Executive", "Banking & Finance", "Mumbai", "voice", 2, 3,
+     "Assist retail banking customers: account queries, cards, disputes and fraud alerts with strict verification.",
+     ["Banking basics", "Verification", "English", "Compliance"]),
+    ("Insurance Claims Support Executive", "Insurance", "Gurugram", "blended", 2, 3,
+     "Guide customers through health and motor claims by phone and email, check documents and update claim status.",
+     ["Insurance basics", "Documentation", "Written English", "Empathy"]),
+    ("Collections & Recovery Executive - Voice", "Collections", "Chennai", "voice", 2, 3,
+     "Call customers with overdue payments, negotiate repayment plans and record promises to pay within compliance.",
+     ["Negotiation", "Compliance", "Hindi", "English"]),
+    ("Retention & Win-back Specialist", "Customer Support", "Noida", "voice", 2, 3,
+     "Speak to customers who want to cancel, understand why and offer the right plan or discount to keep them.",
+     ["Retention", "Persuasion", "CRM", "Active listening"]),
+    ("Outbound Sales Executive - Telecom", "Sales", "Hyderabad", "voice", 2, 3,
+     "Make outbound calls to upgrade existing customers, handle objections and meet daily conversion targets.",
+     ["Sales", "Objection handling", "English", "Target orientation"]),
+    ("Travel Support Executive - Blended", "Customer Support", "Kolkata", "blended", 2, 3,
+     "Handle booking changes, cancellations and refunds for airline and hotel customers on calls and chat.",
+     ["Travel systems", "Multitasking", "English", "Problem solving"]),
+    ("Social Media Support Executive", "Customer Support", "Bengaluru", "chat", 2, 3,
+     "Respond to customers on social platforms and messaging apps, keep the brand tone and escalate sensitive "
+     "posts.", ["Written English", "Brand tone", "Escalation", "Typing speed"]),
+    ("Back Office Process Executive - KYC", "Back Office", "Pune", "back_office", 2, 3,
+     "Verify KYC documents, update records and clear the daily queue with a high accuracy score.",
+     ["KYC", "MS Excel", "Accuracy", "Attention to detail"]),
+    ("Claims Processing Associate", "Back Office", "Chennai", "back_office", 2, 3,
+     "Process and adjudicate claims against policy rules, flag exceptions and keep turnaround time within SLA.",
+     ["Claims processing", "Rule interpretation", "MS Excel", "Accuracy"]),
+    ("Quality Analyst - Voice & Chat", "Quality", "Hyderabad", "other", 2, 3,
+     "Audit calls and chats on the quality form, calibrate with clients and deliver weekly feedback to agents.",
+     ["Call auditing", "Feedback", "Calibration", "MS Excel"]),
+    ("Process Trainer - Customer Support", "Training", "Bengaluru", "other", 2, 3,
+     "Train new joiners on product, process and soft skills, run assessments and support them on the floor.",
+     ["Training delivery", "Communication", "Assessments", "Coaching"]),
+    ("Subject Matter Expert - Billing Process", "Operations", "Gurugram", "blended", 2, 3,
+     "Be the floor expert for billing queries, take escalated contacts and publish tips to the team.",
+     ["Billing process", "Escalation handling", "Coaching", "CRM"]),
+    ("Workforce Management Analyst", "Operations", "Pune", "other", 2, 3,
+     "Forecast volumes, build schedules and track real-time adherence for a 300-seat voice and chat account.",
+     ["Forecasting", "Scheduling", "MS Excel", "Reporting"]),
+    ("Escalation Desk Executive - Email & Chat", "Customer Support", "Noida", "blended", 2, 3,
+     "Own escalated customer cases end to end, write careful written responses and coordinate with internal teams.",
+     ["Written English", "Escalation handling", "Ownership", "Stakeholder communication"]),
+    ("Team Leader Trainee - Customer Support", "Customer Support", "Hyderabad", "voice", 2, 3,
+     "Step up from agent to team leader: handle floor queries, track team metrics and run daily huddles.",
+     ["People skills", "MIS reporting", "Coaching", "English"]),
 ]
 
 

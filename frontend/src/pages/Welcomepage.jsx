@@ -31,7 +31,7 @@ function Welcomepage({ onStart, config }) {
           </div>
         </div>
 
-        <h1>Meet {config.interviewer_name}, your interviewer</h1>
+        <h1>Meet {(config.interviewer_names || [config.interviewer_name]).join(" or ")}, your interviewer</h1>
 
         <p className="lobby-lead">
           Have a natural conversation about your experience. Your interviewer

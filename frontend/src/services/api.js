@@ -168,7 +168,7 @@ export async function startInterview(candidateId) {
   );
   const data = await response.json();
   sessionToken = data.session_token;
-  return { sessionId: data.session_id, mode: data.mode || "turn", ...parseSpokenReply(data) };
+  return { sessionId: data.session_id, mode: data.mode || "turn", interviewerName: data.interviewer_name || "", ...parseSpokenReply(data) };
 }
 
 // `audioBlob` is a WAV of one complete answer (recorded hands-free).

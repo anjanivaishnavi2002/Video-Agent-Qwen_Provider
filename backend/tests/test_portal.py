@@ -249,14 +249,14 @@ def test_interview_limit_and_deleting_a_recording(client, monkeypatch):
     assert client.delete(f"/portal/interviews/{second}", headers=h).status_code == 404
 
 
-def test_admin_can_add_30_sample_jobs_by_experience_and_candidates_see_them(client):
+def test_admin_can_add_50_sample_jobs_by_experience_and_candidates_see_them(client):
     boss = admin_h(client)
     first = client.post("/admin/jobs/sample", headers=boss).json()
     again = client.post("/admin/jobs/sample", headers=boss).json()
-    assert first["existing"] + first["added"] == 30 and again["added"] == 0
+    assert first["existing"] + first["added"] == 50 and again["added"] == 0
     items = client.get("/admin/jobs?page_size=100", headers=boss).json()["items"]
     sample = [j for j in items if j["experience_min"] is not None]
-    assert len(sample) >= 30 and {j["process_type"] for j in sample} >= {"voice", "chat", "email", "blended"}
+    assert len(sample) >= 50 and {j["process_type"] for j in sample} >= {"voice", "chat", "email", "blended"}
     assert min(j["experience_min"] for j in sample) == 0 and max(j["experience_max"] for j in sample) >= 10
     assert client.post("/admin/jobs/sample").status_code in (401, 403)
     h = cand_h(client, "samples@example.com")

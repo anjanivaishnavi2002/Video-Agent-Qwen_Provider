@@ -59,6 +59,7 @@ function InterviewPage({
   // starting | thinking | speaking | listening | finished | error
   const [status, setStatus] = useState("starting");
   const [error, setError] = useState("");
+  const [hostName, setHostName] = useState("");
   const [saving, setSaving] = useState(false);
   const [report, setReport] = useState(null);
   const [reportState, setReportState] = useState("idle"); // idle | loading | ready | failed
@@ -238,6 +239,7 @@ function InterviewPage({
         const result = await startInterview(candidateId);
         sessionRef.current = result.sessionId;
         setSessionId(result.sessionId);
+        if (result.interviewerName) setHostName(result.interviewerName);
 
         startRecording(); // camera + microphone, whole interview
         setStartedAt(Date.now());
@@ -408,7 +410,7 @@ function InterviewPage({
         <section
           className={`room-tile tile-ai ${viewStatus === "speaking" ? "is-speaking" : ""}`}
         >
-          <InterviewerAvatar status={viewStatus} name={config.interviewer_name} />
+          <InterviewerAvatar status={viewStatus} name={hostName || config.interviewer_name} />
           <p className="tile-role">Interviewer</p>
 
           <div

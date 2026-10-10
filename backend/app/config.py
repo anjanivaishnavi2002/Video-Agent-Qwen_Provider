@@ -123,10 +123,18 @@ class Settings(BaseSettings):
     # ================================================================
 
     INTERVIEWER_NAME: str = _alias(
-        "Priya",
+        "Alex",
         "INTERVIEWER_NAME",
         "DEFAULT_INTERVIEWER_NAME",
     )
+
+    # Each interview is hosted by one of these (chosen at random, then fixed for that interview). Comma separated.
+    INTERVIEWER_NAMES: str = "Alex,Sam"
+
+    @property
+    def interviewer_names(self) -> list[str]:
+        names = [n.strip() for n in self.INTERVIEWER_NAMES.split(",") if n.strip()]
+        return names or [self.INTERVIEWER_NAME]
 
     INTERVIEWER_TONE: str = _alias(
         "warm, professional and conversational",

@@ -325,7 +325,7 @@ def test_consent_form_and_recording(env):
     form = client.get("/config/consent").json()
     assert form["version"] and form["title"] and len(form["sections"]) >= 4 and len(form["statements"]) >= 2
     assert "$" not in str(form)                              # every placeholder was filled
-    assert "Priya" in str(form)                              # interviewer name comes from settings
+    assert "Alex" in str(form)                              # interviewer name comes from settings
 
     # a wrong / missing consent version is refused, nothing is stored
     assert _upload(client, consent=False).status_code == 400

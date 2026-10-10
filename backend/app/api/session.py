@@ -147,6 +147,7 @@ def start_session(data: StartRequest, db: Session = Depends(get_db)):
         # Gemini Live speaks the opening itself, over the WebSocket. Nothing to generate or synthesise here.
         return {"status": "ok", "finished": False, "mode": "live", "session_id": interview.id,
                 "candidate_id": candidate.id, "session_token": interview.access_token,
+                "interviewer_name": session.cfg.interviewer_name,
                 "live": {"input_rate": 16000, "output_rate": 24000}}
 
     try:

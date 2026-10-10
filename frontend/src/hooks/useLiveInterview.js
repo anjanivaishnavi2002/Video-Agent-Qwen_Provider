@@ -36,7 +36,7 @@ export default function useLiveInterview({ onSpeaking, onFinished, onError, onEx
       live.retries = 0;
       const retry = () => {
         if (live.done || live.closing) return;
-        if (live.retries >= 4) {
+        if (live.retries >= 8) {
           handlers.current.onError?.("The connection to the interviewer was lost. Please reload the page to continue.");
           return;
         }
@@ -44,7 +44,7 @@ export default function useLiveInterview({ onSpeaking, onFinished, onError, onEx
         setTimeout(() => {
           if (live.done || live.closing) return;
           open().then(() => { live.retries = 0; }, retry);
-        }, 1000 * live.retries);
+        }, Math.min(1000 * live.retries, 4000));
       };
       const open = () => new Promise((resolve, reject) => {
         const socket = new WebSocket(liveSocketUrl(sessionId));

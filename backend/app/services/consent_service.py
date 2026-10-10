@@ -18,7 +18,7 @@ def get_consent() -> dict:
         "organization": settings.ORGANIZATION_NAME,
         "retention_days": settings.DATA_RETENTION_DAYS,
         "contact": settings.CONSENT_CONTACT_EMAIL or "the hiring team",
-        "interviewer": settings.INTERVIEWER_NAME,
+        "interviewer": " or ".join(settings.interviewer_names),
         "minutes": settings.INTERVIEW_DURATION_MINUTES,
     }
 
