@@ -51,7 +51,7 @@ done
 echo "== 6. Cloud SQL for PostgreSQL =="
 gcloud sql instances describe "$SQL_INSTANCE" >/dev/null 2>&1 \
   || gcloud sql instances create "$SQL_INSTANCE" --database-version POSTGRES_16 --region "$REGION" \
-       --tier db-custom-1-3840 --storage-type SSD --storage-size 10 --storage-auto-increase \
+       --edition ENTERPRISE --tier db-custom-1-3840 --storage-type SSD --storage-size 10 --storage-auto-increase \
        --availability-type zonal --backup-start-time 02:00 --enable-point-in-time-recovery \
        --deletion-protection
 gcloud sql databases describe "$SQL_DB" --instance "$SQL_INSTANCE" >/dev/null 2>&1 \

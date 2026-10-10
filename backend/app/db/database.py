@@ -39,6 +39,7 @@ def init_db() -> None:
         from app.db import models  # noqa: F401  (registers the tables)
 
         Base.metadata.create_all(bind=engine)
+        _add_missing_columns()
 
 
 def _wait_for_database() -> None:
@@ -52,3 +53,30 @@ def _wait_for_database() -> None:
                 raise
             logger.warning("Database not ready (%s). Retry %d/%d", exc.__class__.__name__, attempt, settings.DB_CONNECT_RETRIES)
             time.sleep(settings.DB_CONNECT_RETRY_SECONDS)
+
+
+def _add_missing_columns() -> None:
+    """
+    Local development only (AUTO_CREATE_SCHEMA=true): `create_all` never changes a table that already exists, so a
+    database created by an older version lacks the newest columns. Add them (nullable / with a default) - additive,
+    never drops or rewrites data. Production uses Alembic instead.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    with engine.begin() as connection:
+        for table in Base.metadata.sorted_tables:
+            if not inspector.has_table(table.name):
+                continue
+            existing = {c["name"] for c in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing:
+                    continue
+                ddl_type = column.type.compile(dialect=engine.dialect)
+                default = ""
+                if column.default is not None and getattr(column.default, "is_scalar", False):
+                    value = column.default.arg
+                    default = f" DEFAULT {int(value) if isinstance(value, bool) else repr(value)}"
+                null = "" if column.nullable or default else ""
+                connection.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {ddl_type}{default}{null}'))
+                logger.warning("Added missing column %s.%s (development schema sync)", table.name, column.name)

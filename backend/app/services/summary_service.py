@@ -12,7 +12,9 @@ from datetime import datetime
 
 from app.config import settings
 from app.db.database import SessionLocal
-from app.db.models import Candidate, Interview
+from sqlalchemy.orm import object_session
+
+from app.db.models import Candidate, Interview, Job
 from app.prompts.interviewer import load_prompts, render
 from app.providers import factory
 from app.providers.llm_errors import LLMError
@@ -129,8 +131,13 @@ def summarize_events(events) -> dict:
         elif event.event_type == "face_returned" and missing_since is not None:
             missing_ms += max(0, event.offset_ms - missing_since)
             missing_since = None
+    faces_seen = [int((e.details or {}).get("faces", 0)) for e in events
+                  if e.event_type == "multiple_faces" and isinstance(e.details, dict)]
     return {
         "counts": counts,
+        "max_faces_in_view": max([1] + faces_seen) if events else None,
+        "multiple_face_events": counts.get("multiple_faces", 0),
+        "tab_switches": counts.get("tab_hidden", 0),
         "face_missing_seconds": round(missing_ms / 1000, 1),
         "face_missing_at_end": missing_since is not None,
         "timeline": timeline,
@@ -139,6 +146,36 @@ def summarize_events(events) -> dict:
 
 
 def build_summary(interview: Interview, candidate_name: str) -> dict:
+    """Report for one interview. A voice interview that included written exercises also gets their review."""
+    report = _build_summary_core(interview, candidate_name)
+    if (getattr(interview, "mode", None) or "voice") != "chat" and _wrote_anything(interview):
+        from app.services import chat_service
+
+        db = object_session(interview)
+        try:
+            candidate = db.get(Candidate, interview.candidate_id)
+            job = db.get(Job, interview.job_id) if interview.job_id else None
+            review = chat_service.review_work(interview, candidate, job)
+            if review:
+                report["chat"] = review
+                if report.get("status") == "skipped":       # spoke too little, but the written work can still be read
+                    report["status"] = "ready"
+            else:
+                report["written_error"] = "The model returned no usable review of the written work."
+        except LLMError as exc:
+            logger.error("Written-work review failed: %s | %s", exc.message, exc.detail)
+            report["written_error"] = exc.message
+    return report
+
+
+def _wrote_anything(interview: Interview) -> bool:
+    from app.services import chat_service
+
+    work = getattr(interview, "chat_work", None) or {}
+    return any(chat_service.wrote_something(w) for w in work.values() if isinstance(w, dict))
+
+
+def _build_summary_core(interview: Interview, candidate_name: str) -> dict:
     """Build the report dict for one interview (calls the model once for the text summary)."""
     transcript = interview.transcript or []
     answers = sum(1 for t in transcript if t.get("role") == "candidate")
@@ -151,6 +188,8 @@ def build_summary(interview: Interview, candidate_name: str) -> dict:
             "events": summarize_events(interview.events or []),
         },
     }
+    if (getattr(interview, "mode", None) or "voice") == "chat":
+        return _build_chat_report(interview, candidate_name, report)
     if answers == 0:
         report["status"] = "skipped"
         report["reason"] = "The candidate gave no answers, so there is nothing to summarise."
@@ -204,6 +243,41 @@ def build_summary(interview: Interview, candidate_name: str) -> dict:
     except LLMError as exc:
         logger.error("Scorecard failed: %s | %s", exc.message, exc.detail)
         report["scorecard"] = {"status": "failed", "error": exc.message}
+    return report
+
+
+def _build_chat_report(interview: Interview, candidate_name: str, report: dict) -> dict:
+    """Chat (written skills) assessment: the model reviews the candidate's emails / customer chats."""
+    from app.services import chat_service       # local import: chat_service imports session_manager
+
+    report["mode"] = "chat"
+    report["proctoring"] = {"tab_switches": interview.tab_switch_count or 0,
+                            "ended_for_tab_switches": interview.end_reason == "tab_switch_limit"}
+    work = interview.chat_work or {}
+    wrote_anything = any(chat_service.wrote_something(w) for w in work.values() if isinstance(w, dict))
+    if not wrote_anything:
+        report["status"] = "skipped"
+        report["reason"] = "The candidate wrote nothing, so there is nothing to review."
+        return report
+    db = object_session(interview)
+    try:
+        candidate = db.get(Candidate, interview.candidate_id)
+        job = db.get(Job, interview.job_id) if interview.job_id else None
+        review = chat_service.review_work(interview, candidate, job)
+    except LLMError as exc:
+        logger.error("Chat review failed: %s | %s", exc.message, exc.detail)
+        report["status"] = "failed"
+        report["error"] = exc.message
+        return report
+    if not review:
+        report["status"] = "failed"
+        report["error"] = "The model returned no usable review."
+        return report
+    report["model"] = settings.active_model
+    report["chat"] = review
+    report["interview"] = {"overview": review["overview"],
+                           "topics_discussed": [t["title"] for t in review["tasks"]],
+                           "stated_experience": []}
     return report
 
 

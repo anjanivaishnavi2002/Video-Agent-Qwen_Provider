@@ -8,10 +8,14 @@ CONN="${PROJECT_ID}:${REGION}:${SQL_INSTANCE}"
 gcloud config set project "$PROJECT_ID"
 gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
-echo "== Build + push images (Cloud Build; no local Docker needed) =="
-gcloud builds submit "$ROOT/backend"              --tag "$REGISTRY/backend:$TAG"      --timeout 3000s
-gcloud builds submit "$ROOT/notification-service" --tag "$REGISTRY/notification:$TAG"
-gcloud builds submit "$ROOT/frontend"             --tag "$REGISTRY/frontend:$TAG"
+if [ "${SKIP_BUILD:-0}" = "1" ]; then
+  echo "== Skipping image builds (SKIP_BUILD=1, using tag $TAG) =="
+else
+  echo "== Build + push images (Cloud Build; no local Docker needed) =="
+  gcloud builds submit "$ROOT/backend"              --tag "$REGISTRY/backend:$TAG"      --timeout 3000s
+  gcloud builds submit "$ROOT/notification-service" --tag "$REGISTRY/notification:$TAG"
+  gcloud builds submit "$ROOT/frontend"             --tag "$REGISTRY/frontend:$TAG"
+fi
 
 echo "== Notification service (private: only the backend service account may call it) =="
 gcloud run deploy notification-service \
@@ -26,18 +30,17 @@ gcloud run services add-iam-policy-binding notification-service --region "$REGIO
 
 BACKEND_COMMON=(
   --image "$REGISTRY/backend:$TAG" --region "$REGION" --service-account "$BACKEND_SA"
-  --add-cloudsql-instances "$CONN"
-  --set-env-vars "ENVIRONMENT=production,LOG_FORMAT=json,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=$VERTEX_LOCATION,VERTEX_AI_MODEL=$VERTEX_AI_MODEL,INTERVIEW_MODE=live,GEMINI_LIVE_MODEL=${GEMINI_LIVE_MODEL:-gemini-3.8-live},GEMINI_LIVE_LOCATION=${GEMINI_LIVE_LOCATION:-us-central1},STORAGE_BACKEND=gcs,GCS_BUCKET_NAME=$BUCKET,GCS_SIGNING_SERVICE_ACCOUNT=$BACKEND_SA,NOTIFICATION_SERVICE_URL=$NOTIFY_URL,NOTIFICATION_AUTH_MODE=both,ENABLE_DEBUG_ENDPOINTS=false,AUTO_CREATE_SCHEMA=false,PRELOAD_MODELS=true,CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173},FRONTEND_BASE_URL=${FRONTEND_BASE_URL:-http://localhost:5173},ORGANIZATION_NAME=${ORGANIZATION_NAME:-Your Company}"
+  --set-env-vars "ENVIRONMENT=production,LOG_FORMAT=json,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=$VERTEX_LOCATION,VERTEX_AI_MODEL=$VERTEX_AI_MODEL,INTERVIEW_MODE=live,GEMINI_LIVE_MODEL=${GEMINI_LIVE_MODEL:-gemini-3.8-live},GEMINI_LIVE_LOCATION=${GEMINI_LIVE_LOCATION:-us-central1},STORAGE_BACKEND=gcs,GCS_BUCKET_NAME=$BUCKET,GCS_SIGNING_SERVICE_ACCOUNT=$BACKEND_SA,NOTIFICATION_SERVICE_URL=$NOTIFY_URL,NOTIFICATION_AUTH_MODE=both,ENABLE_DEBUG_ENDPOINTS=false,PUBLIC_APPLY_ENABLED=false,REQUIRE_UNLOCK=true,UNLOCK_CREDIT_COST=${UNLOCK_CREDIT_COST:-10},AUTO_CREATE_SCHEMA=false,PRELOAD_MODELS=${PRELOAD_MODELS:-false},CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173},FRONTEND_BASE_URL=${FRONTEND_BASE_URL:-http://localhost:5173},ORGANIZATION_NAME=${ORGANIZATION_NAME:-Your Company}"
   --set-secrets "DATABASE_URL=database-url:latest,JWT_SECRET=jwt-secret:latest,NOTIFICATION_SERVICE_TOKEN=notification-token:latest"
 )
 
 echo "== Database migrations (Cloud Run Job: runs once, never from several instances at the same time) =="
-gcloud run jobs deploy interview-migrate "${BACKEND_COMMON[@]}" --command alembic --args upgrade,head \
+gcloud run jobs deploy interview-migrate "${BACKEND_COMMON[@]}" --set-cloudsql-instances "$CONN" --command alembic --args upgrade,head \
   --max-retries 0 --task-timeout 600
 gcloud run jobs execute interview-migrate --region "$REGION" --wait
 
 echo "== Backend service =="
-gcloud run deploy interview-backend "${BACKEND_COMMON[@]}" \
+gcloud run deploy interview-backend "${BACKEND_COMMON[@]}" --add-cloudsql-instances "$CONN" \
   --allow-unauthenticated \
   --cpu 2 --memory 4Gi --concurrency 8 --timeout 3600 --min-instances 1 --max-instances 3 \
   --no-cpu-throttling --session-affinity --cpu-boost

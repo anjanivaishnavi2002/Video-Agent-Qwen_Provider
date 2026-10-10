@@ -12,125 +12,63 @@ function List({ title, items }) {
   );
 }
 
-function Scorecard({ card }) {
-  if (!card) return null;
-  if (card.status !== "ready") {
-    return (
-      <section className="report-card">
-        <h3>Scorecard</h3>
-        <p className="report-muted">
-          {card.status === "skipped" ? card.reason : card.error || "The scorecard could not be created."}
-        </p>
-      </section>
-    );
-  }
-  return (
-    <section className="report-card">
-      <div className="report-head">
-        <h3>Scorecard</h3>
-        <div className="report-overall" title={card.scale}>
-          <strong>{card.overall_score}</strong>
-          <span>/ 5 overall</span>
-        </div>
-      </div>
-      <ul className="criteria">
-        {card.criteria.map((c) => (
-          <li key={c.name}>
-            <div className="criterion-row">
-              <span>{c.name}</span>
-              <b>{c.score} / 5</b>
-            </div>
-            <div className="bar"><i style={{ width: `${(c.score / 5) * 100}%` }} /></div>
-            <p>{c.evidence}</p>
-          </li>
-        ))}
-      </ul>
-      <List title="Strengths shown in the answers" items={card.strengths} />
-      <List title="Worth probing further" items={card.areas_to_probe} />
-      <p className="report-muted">{card.note}</p>
-    </section>
-  );
-}
-
-function Recording({ recording }) {
-  if (!recording) return null;
-  const events = recording.events || {};
-  const counts = events.counts || {};
-  const labels = {
-    face_missing: "Face not in view",
-    face_returned: "Face back in view",
-    multiple_faces: "More than one face in view",
-    head_movement: "Head movement",
-  };
-  const rows = Object.entries(counts);
-  return (
-    <section className="report-card">
-      <h3>Recording and camera events</h3>
-      <p>Recording saved: {recording.uploaded ? "yes" : "no"}</p>
-      {rows.length === 0 ? (
-        <p className="report-muted">No camera events were recorded.</p>
-      ) : (
-        <ul>
-          {rows.map(([type, count]) => (
-            <li key={type}>{labels[type] || type}: {count}</li>
-          ))}
-          <li>Total time with no face in view: {events.face_missing_seconds ?? 0} s</li>
-        </ul>
-      )}
-      <p className="report-muted">{events.note}</p>
-    </section>
-  );
-}
-
+// What the CANDIDATE sees: short feedback only. Scores, camera events and the reviewer report stay with the admin.
 export default function ReportPanel({ state, report, name }) {
   if (state === "loading") {
     return (
       <main className="report-wrap">
         <section className="report-card">
-          <h3>Preparing the interview report…</h3>
+          <h3>Preparing your feedback…</h3>
           <p className="report-muted">This takes a few seconds. Please keep this page open.</p>
         </section>
       </main>
     );
   }
-  if (state === "failed" || !report) {
+  if (state === "failed" || !report || report.status === "pending") {
     return (
       <main className="report-wrap">
         <section className="report-card">
-          <h3>Interview finished</h3>
-          <p className="report-muted">Your answers were saved, but the report could not be created right now.</p>
+          <h3>Thank you{name ? `, ${name}` : ""}</h3>
+          <p className="report-muted">
+            Your work was saved. The recruiter will review it and be in touch. Your feedback could not be shown
+            right now.
+          </p>
         </section>
       </main>
     );
   }
-  const summary = report.interview;
   return (
     <main className="report-wrap">
       <header className="report-title">
-        <h2>Interview report{name ? ` - ${name}` : ""}</h2>
-        <p className="report-muted">For the reviewer. Based only on the transcript and observable camera events.</p>
+        <h2>Thank you{name ? `, ${name}` : ""}</h2>
+        {report.ended_because && <p className="report-muted">{report.ended_because}</p>}
       </header>
 
       {report.status === "skipped" && (
-        <section className="report-card"><p>{report.reason}</p></section>
-      )}
-      {report.status === "failed" && (
-        <section className="report-card"><p>The summary failed: {report.error}</p></section>
-      )}
-
-      {summary && (
         <section className="report-card">
-          <h3>Summary</h3>
-          <p>{summary.overview}</p>
-          <List title="Topics discussed" items={summary.topics_discussed} />
-          <List title="Experience the candidate described" items={summary.stated_experience} />
-          <List title="Unanswered or unclear" items={summary.unanswered_or_unclear} />
-          <List title="Possible follow-up topics" items={summary.follow_up_topics} />
+          <p>{report.message || "There was not enough to give feedback on."}</p>
         </section>
       )}
 
-      <Scorecard card={report.scorecard} />
-      <Recording recording={report.recording} />
+      {report.overview && (
+        <section className="report-card">
+          <h3>Your feedback</h3>
+          <p>{report.overview}</p>
+          <List title="What went well" items={report.strengths} />
+        </section>
+      )}
+
+      {(report.tasks || []).map((task) => (
+        <section className="report-card" key={task.title}>
+          <h3>{task.title}</h3>
+          <p>{task.feedback}</p>
+          <List title="How to improve" items={task.improvements} />
+        </section>
+      ))}
+
+      <section className="report-card">
+        <p className="report-muted">The recruiter will review your assessment and contact you about the next steps.</p>
+      </section>
     </main>
   );
 }

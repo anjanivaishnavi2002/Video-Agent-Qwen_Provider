@@ -19,10 +19,11 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db.database import get_db
-from app.db.models import AdminUser, Interview
+from app.db.models import AdminUser, CandidateAccount, Interview
 
 JWT_ISSUER = "video-agent"
 JWT_AUDIENCE = "video-agent-admin"
+JWT_CANDIDATE_AUDIENCE = "video-agent-candidate"
 ADMIN_ROLES = ("admin", "recruiter")
 
 
@@ -70,6 +71,16 @@ def create_admin_token(admin: AdminUser) -> tuple[str, int]:
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM), int(lifetime.total_seconds())
 
 
+def create_candidate_token(account: CandidateAccount) -> tuple[str, int]:
+    if len(settings.JWT_SECRET) < 32:
+        raise RuntimeError("JWT_SECRET is not configured (needs at least 32 characters).")
+    now = datetime.now(timezone.utc)
+    lifetime = timedelta(minutes=settings.CANDIDATE_TOKEN_EXPIRE_MINUTES)
+    payload = {"sub": str(account.id), "tv": account.token_version, "iss": JWT_ISSUER,
+               "aud": JWT_CANDIDATE_AUDIENCE, "iat": now, "exp": now + lifetime}
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM), int(lifetime.total_seconds())
+
+
 def _unauthorized(detail: str = "Not authenticated") -> HTTPException:
     return HTTPException(status_code=401, detail=detail, headers={"WWW-Authenticate": "Bearer"})
 
@@ -106,6 +117,26 @@ def get_current_admin(
     if not admin or not admin.is_active or admin.token_version != claims.get("tv"):
         raise _unauthorized("Session expired. Please sign in again.")
     return admin
+
+
+def get_current_account(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> CandidateAccount:
+    """Dependency: the signed-in candidate account (audience differs from admin tokens, so they never mix)."""
+    token = _bearer(authorization)
+    if not token or len(settings.JWT_SECRET) < 32:
+        raise _unauthorized()
+    try:
+        claims = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM],
+                            audience=JWT_CANDIDATE_AUDIENCE, issuer=JWT_ISSUER,
+                            options={"require": ["exp", "sub", "iss", "aud"]})
+        account = db.get(CandidateAccount, int(claims["sub"]))
+    except (jwt.PyJWTError, ValueError, TypeError):
+        raise _unauthorized("Invalid or expired token") from None
+    if not account or not account.is_active or account.token_version != claims.get("tv"):
+        raise _unauthorized("Session expired. Please sign in again.")
+    return account
 
 
 def require_admin(admin: AdminUser = Depends(get_current_admin)) -> AdminUser:
@@ -200,4 +231,32 @@ def require_admin_or_session(
             pass
     if settings.ADMIN_API_KEY and _same(settings.ADMIN_API_KEY, x_api_key):
         return
+    raise HTTPException(status_code=403, detail="Not allowed")
+
+
+def caller_role(
+    session_id: int,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+    x_session_token: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> str:
+    """Who is reading this interview: "admin" (admin JWT or legacy API key) or "candidate" (its own session token).
+
+    Admins get the full reviewer report; the candidate only gets a short feedback view (no scores, no camera or
+    proctoring counts). Anything else is rejected.
+    """
+    token = _bearer(authorization)
+    if token and len(settings.JWT_SECRET) >= 32:
+        try:
+            claims = _decode_admin_token(token)
+            admin = db.get(AdminUser, int(claims["sub"]))
+            if admin and admin.is_active and admin.token_version == claims.get("tv") and admin.role in ADMIN_ROLES:
+                return "admin"
+        except (HTTPException, ValueError, TypeError):
+            pass
+    if settings.ADMIN_API_KEY and _same(settings.ADMIN_API_KEY, x_api_key):
+        return "admin"
+    if _check_token(db, session_id, x_session_token):
+        return "candidate"
     raise HTTPException(status_code=403, detail="Not allowed")

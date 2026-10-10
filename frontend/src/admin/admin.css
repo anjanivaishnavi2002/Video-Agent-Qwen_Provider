@@ -39,3 +39,26 @@ tr.click { cursor:pointer; } tr.click:hover { background:#f5f8ff; }
 .contact { border:1px solid var(--line); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:8px; }
 .contact legend { font-weight:600; padding:0 6px; } .contact textarea { width:100%; box-sizing:border-box; font:inherit; padding:8px; }
 .check { display:flex; flex-direction:row; align-items:center; gap:6px; }
+
+/* ---------- Teaser / unlock / credits ---------- */
+.teaser-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 14px 0; }
+.teaser-grid div { display: flex; flex-direction: column; gap: 2px; background: #f4f6fb; padding: 10px 12px; border-radius: 8px; }
+.unlock-box { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  border: 2px dashed #4a63e7; background: #eef1ff; border-radius: 10px; padding: 14px 16px; margin: 14px 0 6px; }
+.credit-balance { font-size: 1.2rem; }
+.credit-balance b { font-size: 1.8rem; }
+@media (max-width: 640px) { .teaser-grid { grid-template-columns: 1fr 1fr; } }
+
+/* credits panel */
+.stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 12px 0; }
+.stat { background: var(--surface, #fff); border: 1px solid var(--border, #e2e8f0); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 2px; }
+.stat b { font-size: 1.8rem; }
+.usage-bar { position: relative; background: #e2e8f0; border-radius: 999px; height: 12px; margin: 8px 0 20px; }
+.usage-bar div { background: #2563eb; height: 100%; border-radius: 999px; }
+.usage-bar span { position: absolute; top: 16px; left: 0; }
+.alert-warn { background: #fef3c7; border: 1px solid #f59e0b; color: #78350f; border-radius: 8px; padding: 10px 14px; }
+.plan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.plan { border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 6px; background: var(--surface, #fff); }
+.plan.popular { border-color: #2563eb; box-shadow: 0 0 0 2px #bfdbfe; }
+.plan em { color: #2563eb; font-style: normal; font-size: 0.75rem; font-weight: 600; }
+.plan-credits { font-size: 1.4rem; font-weight: 700; }

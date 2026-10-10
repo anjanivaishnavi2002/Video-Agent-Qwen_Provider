@@ -53,36 +53,8 @@ def validate_candidate_fields(*, name: str, email: str, phone: str, location: st
             "experience_years": experience_years}
 
 
-@router.post("/upload")
-def upload_resume(
-    name: str = Form(...),
-    consent_version: str = Form(...),
-    file: UploadFile = File(...),
-    email: str = Form(...),
-    phone: str = Form(""),
-    location: str = Form(""),
-    experience_years: float | None = Form(None),
-    skills: str = Form(""),
-    job_id: int | None = Form(None),
-    db: Session = Depends(get_db),
-):
-    if consent_version != get_consent()["version"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Please read and accept the current consent form before continuing.",
-        )
-
-    fields = validate_candidate_fields(name=name, email=email, phone=phone, location=location,
-                                       experience_years=experience_years)
-    if not fields["email"]:
-        raise HTTPException(status_code=400, detail="Please enter your e-mail address.")
-
-    job = None
-    if job_id is not None:
-        job = db.get(Job, job_id)
-        if not job or job.status != "open":
-            raise HTTPException(status_code=400, detail="This job is not open for applications.")
-
+def process_resume_file(file: UploadFile) -> dict:
+    """Validate, read and privately store an uploaded resume. Returns the Candidate resume_* fields."""
     # Read at most limit+1 bytes so an oversized upload cannot exhaust memory.
     limit = settings.MAX_RESUME_MB * 1024 * 1024
     data = file.file.read(limit + 1)
@@ -114,16 +86,54 @@ def upload_resume(
         logger.exception("Could not store resume")
         Path(path).unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail="Could not store the resume. Please try again.")
+    return {
+        "resume_filename": Path(file.filename or "resume").name[:200],
+        "resume_path": stored_path,
+        "resume_content_type": content_type_for(ext),
+        "resume_size_bytes": len(data),
+        "resume_text": text[: settings.RESUME_STORE_MAX_CHARS],
+    }
+
+
+@router.post("/upload")
+def upload_resume(
+    name: str = Form(...),
+    consent_version: str = Form(...),
+    file: UploadFile = File(...),
+    email: str = Form(...),
+    phone: str = Form(""),
+    location: str = Form(""),
+    experience_years: float | None = Form(None),
+    skills: str = Form(""),
+    job_id: int | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    if not settings.PUBLIC_APPLY_ENABLED:
+        raise HTTPException(status_code=403, detail="Please sign in to apply for a job.")
+    if consent_version != get_consent()["version"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Please read and accept the current consent form before continuing.",
+        )
+
+    fields = validate_candidate_fields(name=name, email=email, phone=phone, location=location,
+                                       experience_years=experience_years)
+    if not fields["email"]:
+        raise HTTPException(status_code=400, detail="Please enter your e-mail address.")
+
+    job = None
+    if job_id is not None:
+        job = db.get(Job, job_id)
+        if not job or job.status != "open":
+            raise HTTPException(status_code=400, detail="This job is not open for applications.")
+
+    resume_fields = process_resume_file(file)
 
     candidate = Candidate(
         **fields,
         skills=clean_skills(skills),
         job_id=job.id if job else None,
-        resume_filename=Path(file.filename or "resume").name[:200],
-        resume_path=stored_path,
-        resume_content_type=content_type_for(ext),
-        resume_size_bytes=len(data),
-        resume_text=text[: settings.RESUME_STORE_MAX_CHARS],
+        **resume_fields,
         consent_version=consent_version,
         consented_at=datetime.utcnow(),
         interview_status="applied",

@@ -209,8 +209,76 @@ export async function endInterview(sessionId, reason = "candidate_ended") {
 }
 
 // ---------------------------------------------------------
+// Chat (written skills) assessment
+// ---------------------------------------------------------
+
+export async function startChat(candidateId, focus = null) {
+  const response = await request(
+    "/chat/start",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ candidate_id: candidateId, invite_token: inviteToken, focus }),
+    },
+    "Could not start the written assessment"
+  );
+  const data = await response.json();
+  sessionToken = data.session_token;
+  return data;
+}
+
+export async function sendChatMessage(sessionId, taskId, text) {
+  const response = await request(
+    `/chat/${sessionId}/message`,
+    {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ task_id: taskId, text }),
+    },
+    "The customer could not answer"
+  );
+  return response.json();
+}
+
+export async function saveChatEmail(sessionId, taskId, subject, body, emailId = null) {
+  const response = await request(
+    `/chat/${sessionId}/email`,
+    {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ task_id: taskId, email_id: emailId, subject, body }),
+    },
+    "Could not save your email"
+  );
+  return response.json();
+}
+
+export async function finishChat(sessionId) {
+  const response = await request(
+    `/chat/${sessionId}/finish`,
+    { method: "POST", headers: authHeaders() },
+    "Could not finish the assessment"
+  );
+  return response.json();
+}
+
+// ---------------------------------------------------------
 // Monitoring events + recording
 // ---------------------------------------------------------
+
+// The browser tab / window lost focus. The backend counts it: 2 warnings, then the next one ends the interview.
+export async function sendTabSwitch(sessionId, offsetMs = null) {
+  const response = await request(
+    `/session/${sessionId}/violation`,
+    {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ type: "tab_switch", offset_ms: offsetMs }),
+    },
+    "Could not record the tab switch"
+  );
+  return response.json();
+}
 
 export async function sendEvents(sessionId, events) {
   const response = await request(
@@ -303,7 +371,7 @@ export async function generateInterviewReport(sessionId) {
 export async function waitForInterviewReport(sessionId, { tries = 8, delayMs = 3000 } = {}) {
   for (let attempt = 0; attempt < tries; attempt += 1) {
     const current = await getInterviewReport(sessionId);
-    if (current && current.status) return current;
+    if (current && current.status && current.status !== "pending") return current;
     await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
   return generateInterviewReport(sessionId);

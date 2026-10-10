@@ -9,7 +9,9 @@ from sqlalchemy import text
 
 from app.api import candidates as candidates_api
 from app.api import config as config_api
+from app.api import chat as chat_api
 from app.api import live as live_api
+from app.api import portal as portal_api
 from app.api import resume, session, voice
 from app.api.admin import router as admin_router
 from app.config import settings
@@ -81,6 +83,8 @@ app.include_router(candidates_api.router)
 app.include_router(resume.router)
 app.include_router(session.router)
 app.include_router(live_api.router)
+app.include_router(chat_api.router)
+app.include_router(portal_api.router)
 app.include_router(admin_router)
 if settings.ENABLE_DEBUG_ENDPOINTS:  # raw STT/TTS: local debugging only
     app.include_router(voice.router)

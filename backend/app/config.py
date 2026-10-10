@@ -96,7 +96,8 @@ class Settings(BaseSettings):
     # Generation settings.
     LLM_TEMPERATURE: float = 0.7
     LLM_TOP_P: float = 0.9
-    LLM_MAX_TOKENS: int = 2048    # on Gemini, thinking tokens count toward this
+    LLM_MAX_TOKENS: int = 8192    # on Gemini, thinking tokens count toward this
+    LLM_LONG_MAX_TOKENS: int = 16384   # long structured answers (task sets, reports, evaluations)
 
     # Automatic retry configuration (connection problems / timeouts).
     LLM_MAX_RETRIES: int = 3
@@ -241,6 +242,14 @@ class Settings(BaseSettings):
 
     PRELOAD_MODELS: bool = False
 
+    # Proctoring: browser/tab switches that only warn; the next one ends the interview.
+    MAX_TAB_SWITCH_WARNINGS: int = 2
+    # Chat (written skills) mode
+    CHAT_TASK_COUNT: int = 3
+    LIVE_EXERCISES: int = 2                  # written exercises (email / chat) the live interviewer may pop up; 0 = off
+    CHAT_MAX_CHARS: int = 6000
+    CHAT_MAX_MESSAGES: int = 40
+
     # ================================================================
     # TEXT TO SPEECH
     # ================================================================
@@ -301,7 +310,8 @@ class Settings(BaseSettings):
         "face_missing,"
         "face_returned,"
         "multiple_faces,"
-        "head_movement"
+        "head_movement,"
+        "tab_hidden"
     )
 
     # ================================================================
@@ -332,6 +342,12 @@ class Settings(BaseSettings):
     # Optional first admin, created on startup only when NO admin exists yet (prefer scripts/create_admin.py)
     ADMIN_BOOTSTRAP_EMAIL: str = ""
     ADMIN_BOOTSTRAP_PASSWORD: str = ""
+
+    # Candidate accounts (job portal) and paid recording unlock
+    CANDIDATE_TOKEN_EXPIRE_MINUTES: int = 480
+    PUBLIC_APPLY_ENABLED: bool = True        # anonymous /resume/upload; set false in production (accounts only)
+    UNLOCK_CREDIT_COST: int = 10             # credits taken when an admin unlocks one interview's recording
+    REQUIRE_UNLOCK: bool = True              # recording / transcript / written work need an unlock
 
     # Candidates
     MAX_INTERVIEW_ATTEMPTS: int = 3

@@ -121,3 +121,54 @@ def llm_check(_: AdminUser = Depends(require_admin)):
     except LLMError as exc:
         return {"status": exc.code, "provider": settings.llm_backend, "model": settings.active_model,
                 "error": exc.message}
+
+
+# ---------------------------------------------------------------------------
+# Credits (paid unlock of interview recordings)
+# ---------------------------------------------------------------------------
+
+credits_router = APIRouter(prefix="/credits", tags=["admin: credits"])
+
+
+class GrantIn(BaseModel):
+    amount: int = Field(description="Credits to add (negative to remove)")
+    note: str | None = Field(default=None, max_length=300)
+
+
+@credits_router.get("")
+def credits_overview(limit: int = Query(50, ge=1, le=200), db: Session = Depends(get_db),
+                     _: AdminUser = Depends(require_admin)):
+    from app.db.models import CreditLedger
+    from app.services import credit_service
+
+    from sqlalchemy import func
+
+    from app.db.models import Interview
+
+    rows = db.query(CreditLedger).order_by(CreditLedger.id.desc()).limit(limit).all()
+    granted = db.query(func.coalesce(func.sum(CreditLedger.delta), 0)).filter(CreditLedger.delta > 0).scalar() or 0
+    used = -(db.query(func.coalesce(func.sum(CreditLedger.delta), 0)).filter(CreditLedger.delta < 0).scalar() or 0)
+    unlocks = db.query(CreditLedger).filter(CreditLedger.reason == "unlock").count()
+    waiting = (db.query(Interview).filter(Interview.status.in_(("finished", "ended_early")),
+                                          Interview.video_unlocked_at.is_(None)).count())
+    balance = credit_service.balance(db)
+    cost = settings.UNLOCK_CREDIT_COST
+    total = granted or 0
+    return {"balance": balance, "unlock_cost": cost, "granted_total": int(granted), "used_total": int(used),
+            "used_percent": round(100 * used / total) if total else 0, "unlocks": unlocks,
+            "unlocks_left": balance // cost if cost else None, "locked_interviews_waiting": waiting,
+            "low_balance": balance < 3 * cost,
+            "plans": [{"name": "Starter", "credits": 100, "unlocks": 100 // cost, "blurb": "For a small hiring drive"},
+                      {"name": "Growth", "credits": 500, "unlocks": 500 // cost, "blurb": "Most teams", "popular": True},
+                      {"name": "Scale", "credits": 2000, "unlocks": 2000 // cost, "blurb": "High-volume BPO hiring"}],
+            "ledger": [{"id": r.id, "delta": r.delta, "reason": r.reason, "note": r.note,
+                        "interview_id": r.interview_id, "candidate_id": r.candidate_id,
+                        "balance_after": r.balance_after, "created_at": r.created_at} for r in rows]}
+
+
+@credits_router.post("/grant")
+def credits_grant(data: GrantIn, db: Session = Depends(get_db), admin: AdminUser = Depends(require_superadmin)):
+    """Only the administrator role may add credits (recruiters spend them)."""
+    from app.services import credit_service
+
+    return {"balance": credit_service.grant(db, admin, data.amount, data.note)}

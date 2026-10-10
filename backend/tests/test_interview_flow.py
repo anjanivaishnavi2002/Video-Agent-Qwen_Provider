@@ -83,6 +83,7 @@ class FakeLLM:
 
     def chat_json(self, messages, schema, **kw):
         from app.providers.gemini_provider import parse_json_loosely
+        kw.pop("max_tokens", None)
         return parse_json_loosely(self.chat(messages, schema=schema, **kw))
 
 
@@ -99,6 +100,8 @@ class AuthClient(TestClient):
         kw["headers"] = headers
         if match and int(match.group(1)) in TOKENS and not anonymous:
             headers.setdefault("X-Session-Token", TOKENS[int(match.group(1))])
+        if match and not anonymous and re.search(r"/(result|summary)$", str(url).split("?")[0]):
+            headers.setdefault("X-API-Key", "test-admin-key")     # these tests read the full reviewer view
         response = super().request(method, url, **kw)
         if str(url) == "/session/start" and response.status_code == 200:
             body = response.json()
@@ -115,7 +118,6 @@ def env():
     interview_service.get_llm = lambda: fake
     evaluation_service.get_llm = lambda: fake
 
-    transcripts = iter([])
     state = {"texts": []}
     voice_service.transcribe = lambda data, suffix=".wav": state["texts"].pop(0) if state["texts"] else "I worked on voice support."
     voice_service.synthesize = lambda text: b"RIFFfakewav" + text.encode()

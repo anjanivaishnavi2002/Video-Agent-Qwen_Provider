@@ -52,7 +52,15 @@ class Job(Base):
     employment_type = Column(String(50))                 # full_time | part_time | contract ...
     description = Column(Text, nullable=False)           # the job description given to the AI interviewer
     required_skills = Column(JSON)                       # ["English", "CRM tools", ...]
+    process_type = Column(String(20))                    # voice | chat | email | blended | back_office | other
+    experience_min = Column(Integer)                     # years, None = no minimum
+    experience_max = Column(Integer)                     # years, None = no maximum
     status = Column(String(20), nullable=False, default="open", index=True)   # draft | open | closed
+    # Optional JD document (PDF/DOCX/TXT): stored in the private bucket, only the reference lives here
+    jd_file_path = Column(String)
+    jd_file_name = Column(String(200))
+    jd_content_type = Column(String(100))
+    jd_size_bytes = Column(Integer)
     created_by = Column(Integer, ForeignKey("admin_users.id", ondelete="SET NULL"))
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -80,6 +88,7 @@ class Candidate(Base):
     resume_profile = Column(JSON)                         # structured profile, built once and cached
 
     job_id = Column(Integer, ForeignKey("jobs.id", ondelete="SET NULL"), index=True)   # applied job
+    account_id = Column(Integer, ForeignKey("candidate_accounts.id", ondelete="SET NULL"), index=True)  # login owner
     interview_status = Column(String(30), nullable=False, default="applied", index=True)
     interview_attempts = Column(Integer, nullable=False, default=0)
     interview_score = Column(Float)                       # 0-100, copied from the latest evaluation
@@ -116,6 +125,14 @@ class Interview(Base):
     video_size_bytes = Column(Integer)
     video_uploaded_at = Column(DateTime)
     summary = Column(JSON)                      # factual summary + recording/face-event report (see summary_service)
+    video_unlocked_at = Column(DateTime)        # set when an admin paid credits to see the recording / full detail
+    video_unlocked_by = Column(Integer, ForeignKey("admin_users.id", ondelete="SET NULL"))
+
+    # Chat (written skills) assessment + proctoring counters
+    mode = Column(String(10), nullable=False, default="voice")   # voice | chat
+    tab_switch_count = Column(Integer, nullable=False, default=0)  # browser/tab switches (2 warnings, the 3rd ends it)
+    chat_tasks = Column(JSON)                   # tasks the AI set from the job description + experience
+    chat_work = Column(JSON)                    # the candidate's answers per task id
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -208,3 +225,60 @@ class NotificationRecord(Base):
     triggered_by = Column(Integer, ForeignKey("admin_users.id", ondelete="SET NULL"))   # null = automatic
     created_at = Column(DateTime, default=datetime.utcnow)
     sent_at = Column(DateTime)
+
+
+class CandidateAccount(Base):
+    """A candidate's login (e-mail + password). Separate from admins. Each application is a Candidate row."""
+
+    __tablename__ = "candidate_accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), nullable=False, unique=True, index=True)
+    full_name = Column(String(200), nullable=False)
+    phone = Column(String(32))
+    password_hash = Column(String(255), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    token_version = Column(Integer, nullable=False, default=0)
+    last_login_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CreditWallet(Base):
+    """The company's credit balance (single row, id=1). Locked with SELECT ... FOR UPDATE while credits move."""
+
+    __tablename__ = "credit_wallet"
+
+    id = Column(Integer, primary_key=True)
+    balance = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class CreditLedger(Base):
+    """Append-only record of every credit movement. `unlock_key` makes an unlock idempotent (unique per interview)."""
+
+    __tablename__ = "credit_ledger"
+
+    id = Column(Integer, primary_key=True)
+    delta = Column(Integer, nullable=False)                  # + grant, - unlock
+    reason = Column(String(30), nullable=False)              # grant | unlock | adjustment
+    note = Column(String(300))
+    interview_id = Column(Integer, ForeignKey("interviews.id", ondelete="SET NULL"), index=True)
+    candidate_id = Column(Integer, ForeignKey("candidates.id", ondelete="SET NULL"), index=True)
+    admin_id = Column(Integer, ForeignKey("admin_users.id", ondelete="SET NULL"))
+    balance_after = Column(Integer, nullable=False)
+    unlock_key = Column(String(60), unique=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class InterviewJob(Base):
+    """Which jobs an interview is attached to. A candidate interviews ONCE (from their resume); every job they apply
+    to gets the same recording and report attached, and an admin unlocking it pays only once."""
+
+    __tablename__ = "interview_jobs"
+    __table_args__ = (UniqueConstraint("interview_id", "job_id", name="uq_interview_job"),)
+
+    id = Column(Integer, primary_key=True)
+    interview_id = Column(Integer, ForeignKey("interviews.id", ondelete="CASCADE"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    candidate_id = Column(Integer, ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False, index=True)   # the application
+    created_at = Column(DateTime, default=datetime.utcnow)

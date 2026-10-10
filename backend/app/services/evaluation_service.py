@@ -10,6 +10,7 @@ from app.db.models import Candidate, Evaluation, Interview, Job
 from app.prompts.interviewer import format_job, format_profile, load_prompts, render
 from app.providers.factory import get_llm
 from app.providers.llm_errors import LLMError
+from app.services import candidate_service
 from app.services import notification_client
 from app.services.summary_service import format_transcript
 
@@ -79,7 +80,7 @@ def evaluate_interview(db: Session, interview_id: int, *, force: bool = False) -
     if interview.evaluation and not force:
         return interview.evaluation
     candidate = db.get(Candidate, interview.candidate_id)
-    job_id = interview.job_id or (candidate.job_id if candidate else None)
+    job_id = None if (candidate and candidate.account_id) else (interview.job_id or (candidate.job_id if candidate else None))
     job = db.get(Job, job_id) if job_id else None
 
     if _answers(interview) < MIN_CANDIDATE_ANSWERS:
@@ -95,7 +96,8 @@ def evaluate_interview(db: Session, interview_id: int, *, force: bool = False) -
                       resume_profile=format_profile(candidate.resume_profile if candidate else None),
                       turns=_answers(interview), end_reason=interview.end_reason or "unknown", transcript=text)
         messages = [{"role": "system", "content": prompts["evaluation_system"]}, {"role": "user", "content": user}]
-        data = clean_evaluation(get_llm().chat_json(messages, EVALUATION_SCHEMA, temperature=settings.SUMMARY_TEMPERATURE))
+        data = clean_evaluation(get_llm().chat_json(messages, EVALUATION_SCHEMA, temperature=settings.SUMMARY_TEMPERATURE,
+                                                       max_tokens=settings.LLM_LONG_MAX_TOKENS))
 
     evaluation = interview.evaluation or Evaluation(interview_id=interview.id, candidate_id=interview.candidate_id)
     evaluation.overall_score = data["overall_score"]
@@ -108,6 +110,7 @@ def evaluate_interview(db: Session, interview_id: int, *, force: bool = False) -
     if candidate and data["overall_score"] is not None:
         candidate.interview_score = data["overall_score"]
         candidate.updated_at = datetime.utcnow()
+        candidate_service.sync_applications(db, interview, candidate)
     db.commit()
     db.refresh(evaluation)
     return evaluation

@@ -1,3 +1,5 @@
 # Sourced by the nginx entrypoint BEFORE the template is rendered: the API origin goes into the CSP connect-src.
 API_ORIGIN="${API_URL:-}"
 export API_ORIGIN
+API_WS_ORIGIN="$(printf '%s' "$API_ORIGIN" | sed -e 's#^https://#wss://#' -e 's#^http://#ws://#')"
+export API_WS_ORIGIN

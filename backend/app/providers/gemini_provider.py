@@ -105,7 +105,7 @@ class GeminiProvider:
 
     def chat_json(self, messages: list[dict], schema: dict, **kwargs) -> dict:
         """Return the reply as a validated dict. Raises LLMResponseError if it is not usable."""
-        return self._run(messages, schema, kwargs.get("temperature"), parse=True)
+        return self._run(messages, schema, kwargs.get("temperature"), parse=True, max_tokens=kwargs.get("max_tokens"))
 
     def ping(self) -> dict:
         """Tiny live call (admin-only system check) to prove credentials, model and network work."""

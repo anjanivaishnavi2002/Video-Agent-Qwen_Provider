@@ -8,8 +8,9 @@ from sqlalchemy.orm import Session
 
 from app.api.admin.common import file_response, like_pattern, paginate
 from app.api.resume import clean_skills, validate_candidate_fields
+from app.config import settings
 from app.db.database import get_db
-from app.db.models import CANDIDATE_STATUSES, AdminUser, Candidate, Evaluation, Interview, Job, NotificationRecord
+from app.db.models import CANDIDATE_STATUSES, AdminUser, Candidate, Evaluation, Interview, InterviewJob, Job, NotificationRecord
 from app.security import new_token, require_admin, require_superadmin
 from app.services import candidate_service, notification_client, storage
 
@@ -61,6 +62,8 @@ def evaluation_out(e: Evaluation | None) -> dict | None:
 def interview_row(i: Interview) -> dict:
     return {"id": i.id, "candidate_id": i.candidate_id, "attempt_number": i.attempt_number, "status": i.status,
             "end_reason": i.end_reason, "started_at": i.started_at, "ended_at": i.ended_at,
+            "job_id": i.job_id, "mode": i.mode or "voice",
+            "unlocked": bool(i.video_unlocked_at) or not settings.REQUIRE_UNLOCK,
             "has_recording": bool(i.video_path), "overall_score": i.evaluation.overall_score if i.evaluation else None,
             "recommendation": i.evaluation.recommendation if i.evaluation else None}
 
@@ -108,6 +111,9 @@ def candidate_detail(candidate_id: int, include_resume_text: bool = False, db: S
     notifications = (db.query(NotificationRecord).filter(NotificationRecord.candidate_id == c.id)
                      .order_by(NotificationRecord.created_at.desc()).limit(50).all())
     interviews = list(c.interviews)
+    shared = (db.query(Interview).join(InterviewJob, InterviewJob.interview_id == Interview.id)
+              .filter(InterviewJob.candidate_id == c.id, Interview.candidate_id != c.id).all())
+    interviews += [i for i in shared if i not in interviews]
     latest_eval = next((i.evaluation for i in reversed(interviews) if i.evaluation), None)
     out = candidate_row(c)
     out.update({
@@ -200,7 +206,11 @@ def notify(candidate_id: int, data: NotifyIn, db: Session = Depends(get_db),
 def delete_candidate(candidate_id: int, db: Session = Depends(get_db), admin: AdminUser = Depends(require_superadmin)):
     """Permanent deletion of a candidate and everything stored about them (privacy request / retention)."""
     c = _get(db, candidate_id)
-    uris = [c.resume_path] + [i.video_path for i in c.interviews]
+    uris = [i.video_path for i in c.interviews]
+    # The same resume file is shared by one candidate account's applications: keep it while another one uses it.
+    if c.resume_path and not db.query(Candidate).filter(Candidate.resume_path == c.resume_path,
+                                                        Candidate.id != c.id).count():
+        uris.append(c.resume_path)
     for interview in list(c.interviews):
         db.delete(interview)            # cascades: events, turns, evaluation
     db.flush()

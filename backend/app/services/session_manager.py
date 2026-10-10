@@ -59,7 +59,7 @@ def create_session(db: Session, candidate: Candidate) -> tuple[Interview, Interv
     cfg = InterviewSettings.from_config()
     interview = Interview(
         candidate_id=candidate.id,
-        job_id=candidate.job_id,
+        job_id=None if candidate.account_id else candidate.job_id,   # signed-in candidates: one resume-based interview
         status="running",
         transcript=[],
         settings_snapshot=cfg.to_dict(),
@@ -77,7 +77,7 @@ def create_session(db: Session, candidate: Candidate) -> tuple[Interview, Interv
         candidate.resume_profile,
         _prompt_resume_text(candidate),
         started_at=interview.started_at,
-        job=_job_context(db, candidate.job_id),
+        job=candidate_service.job_context(db, candidate),
         candidate_info=_candidate_info(candidate),
     )
     SESSIONS[interview.id] = session
@@ -104,7 +104,7 @@ def get_session(db: Session, interview_id: int) -> InterviewSession | None:
         _prompt_resume_text(candidate),
         transcript=interview.transcript or [],
         started_at=interview.started_at,
-        job=_job_context(db, interview.job_id or candidate.job_id),
+        job=candidate_service.job_context(db, candidate),
         candidate_info=_candidate_info(candidate),
     )
     SESSIONS[interview_id] = session
@@ -125,6 +125,6 @@ def persist(db: Session, interview_id: int, session: InterviewSession, *, close:
         interview.ended_at = datetime.utcnow()
         candidate = db.get(Candidate, interview.candidate_id)
         if candidate:
-            candidate_service.mark_finished(db, candidate)
+            candidate_service.mark_finished(db, candidate, interview)
         SESSIONS.pop(interview_id, None)
     db.commit()

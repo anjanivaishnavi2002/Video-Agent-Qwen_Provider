@@ -57,7 +57,7 @@ function Welcomepage({ onStart, config }) {
         </ul>
 
         <button className="lobby-button" onClick={onStart}>
-          Start Interview
+          Get started
         </button>
       </div>
     </div>

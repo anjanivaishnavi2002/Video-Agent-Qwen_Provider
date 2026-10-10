@@ -33,7 +33,7 @@ export function isSignedIn() {
   return Boolean(current?.token);
 }
 
-async function call(path, { method = "GET", body, params, raw } = {}) {
+async function call(path, { method = "GET", body, params, raw, form } = {}) {
   const url = new URL(`${API_BASE_URL}/admin${path}`, window.location.origin);
   Object.entries(params || {}).forEach(([k, v]) => {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, v);
@@ -44,9 +44,9 @@ async function call(path, { method = "GET", body, params, raw } = {}) {
       method,
       headers: {
         ...(current?.token ? { Authorization: `Bearer ${current.token}` } : {}),
-        ...(body ? { "Content-Type": "application/json" } : {}),
+        ...(body && !form ? { "Content-Type": "application/json" } : {}),
       },
-      body: body ? JSON.stringify(body) : undefined,
+      body: form || (body ? JSON.stringify(body) : undefined),
     });
   } catch {
     throw new Error("Cannot reach the server.");
@@ -113,12 +113,27 @@ export const api = {
   notify: (id, kind, channels, message, subject) =>
     call(`/candidates/${id}/notify`, { method: "POST", body: { kind, channels, message, subject } }),
   jobs: (params) => call("/jobs", { params }),
+  addSampleJobs: () => call("/jobs/sample", { method: "POST" }),
   createJob: (body) => call("/jobs", { method: "POST", body }),
   updateJob: (id, body) => call(`/jobs/${id}`, { method: "PATCH", body }),
   deleteJob: (id) => call(`/jobs/${id}`, { method: "DELETE" }),
+  extractJd: (file) => {
+    const form = new FormData();
+    form.append("file", file);
+    return call("/jobs/extract-jd", { method: "POST", form });
+  },
+  uploadJd: (id, file, fill = false) => {
+    const form = new FormData();
+    form.append("file", file);
+    return call(`/jobs/${id}/jd`, { method: "POST", params: { fill_description: fill ? "true" : "" }, form });
+  },
+  credits: () => call("/credits"),
+  grantCredits: (amount, note) => call("/credits/grant", { method: "POST", body: { amount, note } }),
+  unlock: (id) => call(`/interviews/${id}/unlock`, { method: "POST" }),
   interviews: (params) => call("/interviews", { params }),
   interview: (id) => call(`/interviews/${id}`),
   evaluate: (id) => call(`/interviews/${id}/evaluate`, { method: "POST" }),
+  regenerateReport: (id) => call(`/interviews/${id}/report`, { method: "POST" }),
   notifications: (params) => call("/notifications", { params }),
   admins: () => call("/users"),
   createAdmin: (body) => call("/users", { method: "POST", body }),

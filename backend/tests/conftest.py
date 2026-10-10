@@ -14,4 +14,6 @@ os.environ.setdefault("INTERVIEW_MODE", "turn")        # live-mode tests switch 
 os.environ.setdefault("GOOGLE_CLOUD_PROJECT", "")
 os.environ.setdefault("NOTIFICATION_SERVICE_URL", "")
 os.environ.setdefault("LOGIN_MAX_ATTEMPTS", "5")
+os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")      # lets tests read the full reviewer view
+os.environ.setdefault("REQUIRE_UNLOCK", "false")        # unlock behaviour is tested explicitly in test_portal.py
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

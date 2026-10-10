@@ -11,9 +11,9 @@ from app.config import settings
 from app.db.database import get_db
 from app.db.models import Candidate, Interview, InterviewEvent
 from app.providers.llm_errors import LLMError
-from app.security import _same, require_admin_or_session, require_session_token
+from app.security import _same, caller_role, require_session_token
 from app.services import candidate_service, evaluation_service, session_manager, storage, voice_service
-from app.services import summary_service
+from app.services import chat_service, proctoring_service, summary_service
 from app.services.interview_service import InterviewSession
 
 logger = logging.getLogger(__name__)
@@ -292,6 +292,27 @@ def add_events(session_id: int, data: EventsIn, db: Session = Depends(get_db)):
     return {"stored": stored, "ignored": len(data.events) - stored}
 
 
+class ViolationIn(BaseModel):
+    type: str = "tab_switch"
+    offset_ms: int | None = None
+
+
+@router.post("/{session_id}/violation", dependencies=[Depends(require_session_token)])
+def add_violation(session_id: int, data: ViolationIn, background: BackgroundTasks, db: Session = Depends(get_db)):
+    """The browser tab / window lost focus. Server-side rule: warning 1, warning 2, the next one ends the interview."""
+    _get_interview(db, session_id)
+    if data.type != "tab_switch":
+        raise HTTPException(status_code=400, detail="Unknown violation type")
+    outcome = proctoring_service.record_tab_switch(db, session_id, data.offset_ms)
+    if outcome["ended"] and outcome["count"] > outcome["limit"] and outcome["count"] == outcome["limit"] + 1:
+        interview = db.get(Interview, session_id)
+        if (interview.mode or "voice") == "chat":
+            background.add_task(chat_service.notify_completion_in_background, session_id)
+        elif not settings.live_mode:    # live interviews are closed (and evaluated) by their own socket
+            background.add_task(evaluation_service.evaluate_in_background, session_id)
+    return outcome
+
+
 # ---------------------------------------------------------
 # Recording (camera + microphone of the whole interview)
 # ---------------------------------------------------------
@@ -420,18 +441,24 @@ def video_upload_complete(session_id: int, data: VideoUrlRequest, background: Ba
 # Result
 # ---------------------------------------------------------
 
-@router.get("/{session_id}/result", dependencies=[Depends(require_admin_or_session)])
-def result(session_id: int, db: Session = Depends(get_db)):
+@router.get("/{session_id}/result")
+def result(session_id: int, role: str = Depends(caller_role), db: Session = Depends(get_db)):
     interview = _get_interview(db, session_id)
+    if role != "admin":      # the candidate only sees a short feedback view of their own result
+        return {"id": interview.id, "status": interview.status, "end_reason": interview.end_reason,
+                "summary": chat_service.candidate_view(interview, interview.summary)}
     return {
         "id": interview.id,
         "candidate_id": interview.candidate_id,
         "status": interview.status,
         "end_reason": interview.end_reason,
+        "mode": interview.mode or "voice",
+        "tab_switch_count": interview.tab_switch_count or 0,
         "started_at": interview.started_at,
         "ended_at": interview.ended_at,
         "settings": interview.settings_snapshot,
         "transcript": interview.transcript or [],
+        "chat_work": chat_service.work_for_admin(interview) if interview.chat_tasks else None,
         "has_recording": bool(interview.video_path),
         "video_size_bytes": interview.video_size_bytes,
         "summary": interview.summary,
@@ -447,11 +474,16 @@ def result(session_id: int, db: Session = Depends(get_db)):
     }
 
 
-@router.post("/{session_id}/summary", dependencies=[Depends(require_admin_or_session)])
-def make_summary(session_id: int, force: bool = False, db: Session = Depends(get_db)):
-    """Factual summary of the interview + the observable recording events. `?force=true` regenerates it."""
-    _get_interview(db, session_id)
+@router.post("/{session_id}/summary")
+def make_summary(session_id: int, force: bool = False, role: str = Depends(caller_role),
+                 db: Session = Depends(get_db)):
+    """Factual summary of the interview + the observable recording events. `?force=true` (admin only) regenerates it."""
+    interview = _get_interview(db, session_id)
     try:
-        return summary_service.generate_summary(db, session_id, force=force)
+        summary = summary_service.generate_summary(db, session_id, force=force and role == "admin")
     except LLMError as exc:        # not expected (build_summary catches them) - kept for safety
         raise _llm_http_error(exc) from exc
+    if role != "admin":
+        db.refresh(interview)
+        return chat_service.candidate_view(interview, summary)
+    return summary

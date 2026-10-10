@@ -1,18 +1,27 @@
 import { useEffect, useState } from "react";
 import "./App.css";
 
-import Welcomepage from "./pages/Welcomepage";
 import ConsentPage from "./pages/ConsentPage";
-import ResumePage from "./pages/ResumePage";
+import PortalAuthPage from "./pages/PortalAuthPage";
+import JobBoardPage from "./pages/JobBoardPage";
+import ApplyPage from "./pages/ApplyPage";
 import InterviewPage from "./pages/InterviewPage";
 import { getInvitation, getPublicConfig, setInviteToken } from "./services/api";
+import { getAccount, isSignedIn, listApplications } from "./services/portalApi";
+
+function getAccountName() {
+  return getAccount()?.full_name || "";
+}
 
 function App() {
-  const [page, setPage] = useState("welcome");
+  const [notice, setNotice] = useState("");
+  const [page, setPage] = useState(isSignedIn() ? "jobs" : "auth");
   const [candidateId, setCandidateId] = useState(null);
   const [candidateName, setCandidateName] = useState("");
   const [consentVersion, setConsentVersion] = useState(null);
   const [sessionId, setSessionId] = useState(null);
+  const [job, setJob] = useState(null);                 // job being applied for / assessed
+  const [hasPreviousResume, setHasPreviousResume] = useState(false);
 
   // All tunable values (silence timeout, resume formats, face thresholds, ...)
   // come from the backend configuration, so there is one place to change them.
@@ -31,6 +40,7 @@ function App() {
         setInviteToken(token);
         setInvitation(data);
         if (!data.can_start) setInviteError(data.message || "This interview cannot be started.");
+        else setPage("consent");
         // Remove the secret from the address bar / history once it has been captured.
         window.history.replaceState({}, "", window.location.pathname);
       })
@@ -84,10 +94,25 @@ function App() {
 
   return (
     <>
-      {page === "welcome" && (
-        <Welcomepage
-          config={config}
-          onStart={() => setPage("consent")}
+      {page === "auth" && <PortalAuthPage onSignedIn={() => setPage("jobs")} />}
+
+      {page === "jobs" && (
+        <JobBoardPage
+          notice={notice}
+          onDismissNotice={() => setNotice("")}
+          onSignedOut={() => setPage("auth")}
+          onApply={(selected) => {
+            setJob(selected);
+            listApplications().then((a) => setHasPreviousResume(a.length > 0), () => setHasPreviousResume(false));
+            setPage("consent");
+          }}
+          onStart={(application) => {
+            setInviteToken(application.invite_token);
+            setCandidateId(application.candidate_id);
+            setCandidateName(application.name || "");
+            setJob(application.job);
+            setPage("interview");
+          }}
         />
       )}
 
@@ -100,20 +125,29 @@ function App() {
               setCandidateName(invitation.name);
               setPage("interview");
             } else {
-              setPage("resume");
+              setPage("apply");
             }
           }}
-          onDecline={() => setPage("welcome")}
+          onDecline={() => setPage(invitation ? "auth" : "jobs")}
         />
       )}
 
-      {page === "resume" && (
-        <ResumePage
+      {page === "apply" && job && (
+        <ApplyPage
+          job={job}
           config={config}
           consentVersion={consentVersion}
-          onResumeUploaded={(id, name) => {
-            setCandidateId(id);
-            setCandidateName(name);
+          hasPreviousResume={hasPreviousResume}
+          onBack={() => setPage("jobs")}
+          onApplied={(application) => {
+            if (application.interview_attached) {      // already interviewed once: the recording goes with this job too
+              setNotice(`Applied to ${application.job?.title || "the job"}. Your earlier interview is attached - no new interview needed.`);
+              setPage("jobs");
+              return;
+            }
+            setInviteToken(application.invite_token);
+            setCandidateId(application.candidate_id);
+            setCandidateName(getAccountName());
             setPage("interview");
           }}
         />

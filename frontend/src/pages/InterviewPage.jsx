@@ -11,6 +11,9 @@ import useInterviewRecorder from "../hooks/useInterviewRecorder";
 import useLiveInterview from "../hooks/useLiveInterview";
 import useMediaStream from "../hooks/useMediaStream";
 import useSessionEvents from "../hooks/useSessionEvents";
+import useTabGuard from "../hooks/useTabGuard";
+import ExerciseModal from "../components/ExerciseModal";
+import TabWarning from "../components/TabWarning";
 
 import {
   endInterview,
@@ -61,6 +64,7 @@ function InterviewPage({
   const [reportState, setReportState] = useState("idle"); // idle | loading | ready | failed
   const [startedAt, setStartedAt] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(Boolean(document.fullscreenElement));
+  const [tabWarning, setTabWarning] = useState(null); // { count, warningsLeft, limit } | { ended: true }
 
   const audioRef = useRef(null);
   const startedRef = useRef(false);
@@ -178,7 +182,9 @@ function InterviewPage({
   // Gemini Live (real-time voice): the backend relays the audio, so there is no turn loop in the browser.
   const liveModeRef = useRef(false);
   const [liveVoice, setLiveVoice] = useState(false);
+  const [exercise, setExercise] = useState(null); // written task the interviewer put on screen
   const live = useLiveInterview({
+    onExercise: (task) => setExercise(task),
     onSpeaking: (active) => {
       if (!finishedRef.current) setStatus(active ? "speaking" : "listening");
     },
@@ -312,11 +318,31 @@ function InterviewPage({
 
     audioRef.current?.pause(); // stop the AI voice immediately
     if (liveModeRef.current) {
-      live.end(); // the backend saves the transcript, then answers "finished"
+      setStatus("finished"); // show "saving" right away; the backend answers "finished" and the report follows
+      if (!live.end()) {
+        await finishInterview({ userEnded: true, alreadyEnded: true }); // socket already gone: finish locally
+        return;
+      }
+      // Safety net: if the backend never answers, do not leave the page hanging.
+      setTimeout(() => finishInterview({ userEnded: true, alreadyEnded: true }), 6000);
       return;
     }
     await finishInterview({ userEnded: true });
   }, [finishInterview, live]);
+
+  // Tab / window switches are counted by the backend: 2 warnings, the 3rd ends the interview.
+  useTabGuard({
+    sessionId,
+    enabled: Boolean(startedAt) && viewStatus !== "finished" && viewStatus !== "error",
+    offsetMs,
+    onWarning: (info) => setTabWarning(info),
+    onEnded: () => {
+      setTabWarning({ ended: true });
+      audioRef.current?.pause();
+      live.teardown();
+      finishInterview({ userEnded: false, alreadyEnded: true });
+    },
+  });
 
   // Leaving the page releases the recorder and the AI voice.
   useEffect(() => {
@@ -426,6 +452,18 @@ function InterviewPage({
         {shownError && <p className="room-error">{shownError}</p>}
       </footer>
 
+      <TabWarning info={tabWarning} onClose={() => setTabWarning(null)} />
+      {exercise && viewStatus !== "finished" && (
+        <ExerciseModal
+          key={exercise.id}
+          task={exercise}
+          sessionId={sessionId}
+          onDone={(taskId) => {
+            live.exerciseDone(taskId);
+            setExercise(null);
+          }}
+        />
+      )}
       <audio ref={audioRef} />
     </div>
   );
