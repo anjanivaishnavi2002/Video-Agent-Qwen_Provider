@@ -76,7 +76,7 @@ function InterviewPage({
   const failuresRef = useRef(0);
 
   // One camera + microphone stream shared by face monitor, listener and recorder.
-  const { stream, error: mediaError } = useMediaStream();
+  const { stream, error: mediaError, release: releaseMedia } = useMediaStream();
 
   // Problems that make the interview impossible are derived, not stored.
   const fatalError = candidateId
@@ -100,6 +100,7 @@ function InterviewPage({
   const tooDark = useCameraQuality(stream);
   const handleFaceEvent = useCallback(
     (event) => {
+      if (finishedRef.current) return;          // no monitoring once the interview is over
       pushEvent({ ...event, offset_ms: offsetMs() });
       setCameraEvent({ type: event.type, at: Date.now() });
     },
@@ -160,6 +161,7 @@ function InterviewPage({
         }
 
         const recording = await stopRecording();
+        releaseMedia();                 // the interview is over: switch the camera and microphone off right away
         await flushEvents();
 
         if (id && recording) {
@@ -169,6 +171,7 @@ function InterviewPage({
         console.error("Saving interview data failed:", err);
         setError(err.message || "Could not save the interview recording.");
       } finally {
+        releaseMedia();
         setSaving(false);
       }
 
@@ -184,7 +187,7 @@ function InterviewPage({
         }
       }
     },
-    [stopRecording, flushEvents]
+    [stopRecording, flushEvents, releaseMedia]
   );
 
   // Gemini Live (real-time voice): the backend relays the audio, so there is no turn loop in the browser.
@@ -431,11 +434,15 @@ function InterviewPage({
         </section>
 
         <section className="room-tile tile-you">
-          <FaceMotionDetector
-            stream={stream}
-            config={config.face}
-            onEvent={handleFaceEvent}
-          />
+          {viewStatus === "finished" ? (
+            <p className="tile-role">Camera off</p>
+          ) : (
+            <FaceMotionDetector
+              stream={stream}
+              config={config.face}
+              onEvent={handleFaceEvent}
+            />
+          )}
           <span className="tile-label">{candidateName || "You"}</span>
         </section>
       </main>

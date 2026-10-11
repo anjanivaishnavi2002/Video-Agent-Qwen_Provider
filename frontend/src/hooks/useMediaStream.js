@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // ONE getUserMedia call for the whole interview. The same stream feeds
 //   - the face monitor (video track)
@@ -17,6 +17,15 @@ export default function useMediaStream() {
     error: "", // fatal: no microphone
     videoError: "", // non-fatal: interview continues without camera
   });
+
+  const acquiredRef = useRef(null);
+
+  // Turn the camera and microphone OFF (the browser's camera light goes out). Called as soon as the interview ends.
+  const release = useCallback(() => {
+    acquiredRef.current?.getTracks().forEach((track) => track.stop());
+    acquiredRef.current = null;
+    setState((prev) => (prev.stream ? { ...prev, stream: null } : prev));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,6 +66,7 @@ export default function useMediaStream() {
       }
 
       acquired = stream;
+      acquiredRef.current = stream;
       setState({ stream, error: "", videoError });
     }
 
@@ -65,8 +75,9 @@ export default function useMediaStream() {
     return () => {
       cancelled = true;
       acquired?.getTracks().forEach((track) => track.stop());
+      acquiredRef.current = null;
     };
   }, []);
 
-  return state;
+  return { ...state, release };
 }
