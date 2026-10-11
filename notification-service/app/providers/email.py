@@ -6,6 +6,7 @@ from email.message import EmailMessage
 import httpx
 
 from app.config import Settings
+from app.clients.resend import ResendClient, ResendError
 from app.providers.base import EmailProvider, ProviderError, SendResult
 
 logger = logging.getLogger(__name__)
@@ -80,12 +81,32 @@ class SendGridEmail(EmailProvider):
         return SendResult(self.name, response.headers.get("X-Message-Id"))
 
 
+class ResendEmail(EmailProvider):
+    """Resend (https://resend.com). Thin adapter over the reusable ResendClient."""
+    name = "resend"
+
+    def __init__(self, cfg: Settings):
+        if not (cfg.RESEND_API_KEY and cfg.EMAIL_FROM):
+            raise ValueError("RESEND_API_KEY and EMAIL_FROM are required for EMAIL_PROVIDER=resend")
+        self.reply_to = cfg.EMAIL_REPLY_TO or None
+        self.client = ResendClient(cfg.RESEND_API_KEY, cfg.EMAIL_FROM, timeout=cfg.REQUEST_TIMEOUT_SECONDS)
+
+    def send(self, *, to, subject, text, html=None) -> SendResult:
+        try:
+            message_id = self.client.send(to=to, subject=subject, text=text, html=html, reply_to=self.reply_to)
+        except ResendError as exc:
+            raise ProviderError(str(exc), retryable=exc.retryable) from exc
+        return SendResult(self.name, message_id)
+
+
 def build_email_provider(cfg: Settings) -> EmailProvider:
     kind = cfg.EMAIL_PROVIDER.strip().lower()
     if kind == "console":
         return ConsoleEmail()
+    if kind == "resend":
+        return ResendEmail(cfg)
     if kind == "smtp":
         return SmtpEmail(cfg)
     if kind == "sendgrid":
         return SendGridEmail(cfg)
-    raise ValueError(f"Unknown EMAIL_PROVIDER '{cfg.EMAIL_PROVIDER}' (console | smtp | sendgrid)")
+    raise ValueError(f"Unknown EMAIL_PROVIDER '{cfg.EMAIL_PROVIDER}' (console | resend | smtp | sendgrid)")

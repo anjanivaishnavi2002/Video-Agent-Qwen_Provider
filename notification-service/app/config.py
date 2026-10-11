@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     ORGANIZATION_NAME: str = "our team"
 
     # ---- E-mail ---------------------------------------------------------------------------------
-    EMAIL_PROVIDER: str = "console"         # console | smtp | sendgrid
+    EMAIL_PROVIDER: str = "console"         # console | resend | smtp | sendgrid
     EMAIL_FROM: str = ""                    # e.g. "Recruiting <recruiting@example.com>"
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""                 # secret
     SMTP_USE_TLS: bool = True               # STARTTLS
     SENDGRID_API_KEY: str = ""              # secret
+    RESEND_API_KEY: str = ""                # secret (EMAIL_PROVIDER=resend; EMAIL_FROM must be on a domain verified in Resend)
+    EMAIL_REPLY_TO: str = ""                # optional
 
     # ---- SMS ------------------------------------------------------------------------------------
     SMS_PROVIDER: str = "console"           # console | twilio

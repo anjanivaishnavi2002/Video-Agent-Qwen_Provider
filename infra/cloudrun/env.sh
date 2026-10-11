@@ -16,3 +16,10 @@ export FRONTEND_SA="interview-frontend@${PROJECT_ID}.iam.gserviceaccount.com"
 
 export REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}"
 export TAG="${TAG:-$(date +%Y%m%d-%H%M%S)}"
+
+# ---- Notifications (non-secret values; the API keys/tokens live in Secret Manager) ----------------------------
+# Secrets deploy.sh picks up automatically if they exist: resend-api-key, twilio-account-sid, twilio-auth-token
+# export EMAIL_FROM="Recruiting <hr@your-verified-domain.com>"     # domain must be verified in Resend
+# export EMAIL_REPLY_TO=""
+# export TWILIO_FROM_NUMBER="+1XXXXXXXXXX"                          # or: export TWILIO_MESSAGING_SERVICE_SID="MG..."
+# export VOICE_LANGUAGE="en-IN"

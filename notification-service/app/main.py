@@ -57,7 +57,8 @@ def voice_provider():
 async def lifespan(app: FastAPI):
     # Fail fast on a mis-configured provider instead of failing on the first candidate.
     email_provider(), sms_provider(), voice_provider()
-    logger.info("Started: email=%s sms=%s", email_provider().name, sms_provider().name)
+    logger.info("Started: email=%s sms=%s voice=%s", email_provider().name, sms_provider().name,
+                voice_provider().name)
     yield
 
 
@@ -98,6 +99,68 @@ def ready():
                         content={"status": "ready" if ok else "not_ready",
                                  "email_provider": settings.EMAIL_PROVIDER, "sms_provider": settings.SMS_PROVIDER,
                                  "voice_provider": settings.VOICE_PROVIDER})
+
+
+def _failed(exc: ProviderError, channel: str, to: str):
+    logger.warning("Send failed (%s to %s): %s", channel, mask(to), exc)
+    return JSONResponse(status_code=502 if exc.retryable else 200,
+                        content={"status": "failed", "error": str(exc), "retryable": exc.retryable})
+
+
+# ---- Reusable raw endpoints: any app can send a message it wrote itself (no templates) -------------------------
+class EmailIn(BaseModel):
+    to: str = Field(min_length=3, max_length=255)
+    subject: str = Field(min_length=1, max_length=300)
+    text: str = Field(default="", max_length=20000)
+    html: str | None = Field(default=None, max_length=100000)
+
+
+class SmsIn(BaseModel):
+    to: str = Field(min_length=3, max_length=32)
+    body: str = Field(min_length=1, max_length=1600)
+
+
+class CallIn(BaseModel):
+    to: str = Field(min_length=3, max_length=32)
+    message: str = Field(min_length=1, max_length=1000)
+
+
+@app.post("/v1/email", dependencies=[Depends(require_caller)])
+def send_email(data: EmailIn):
+    """Send an e-mail through the configured provider (Resend in production)."""
+    if not _EMAIL.match(data.to):
+        raise HTTPException(status_code=400, detail="Invalid e-mail address")
+    if not (data.text or data.html):
+        raise HTTPException(status_code=400, detail="Provide text or html")
+    try:
+        result = email_provider().send(to=data.to, subject=data.subject, text=data.text or "", html=data.html)
+    except ProviderError as exc:
+        return _failed(exc, "email", data.to)
+    return {"status": "sent", "provider": result.provider, "message_id": result.message_id}
+
+
+@app.post("/v1/sms", dependencies=[Depends(require_caller)])
+def send_sms(data: SmsIn):
+    """Send an SMS through the configured provider (Twilio in production)."""
+    if not _PHONE.match(data.to):
+        raise HTTPException(status_code=400, detail="Invalid phone number")
+    try:
+        result = sms_provider().send(to=data.to, body=data.body)
+    except ProviderError as exc:
+        return _failed(exc, "sms", data.to)
+    return {"status": "sent", "provider": result.provider, "message_id": result.message_id}
+
+
+@app.post("/v1/call", dependencies=[Depends(require_caller)])
+def place_call(data: CallIn):
+    """Place a text-to-speech phone call through the configured provider (Twilio in production)."""
+    if not _PHONE.match(data.to):
+        raise HTTPException(status_code=400, detail="Invalid phone number")
+    try:
+        result = voice_provider().call(to=data.to, message=data.message)
+    except ProviderError as exc:
+        return _failed(exc, "call", data.to)
+    return {"status": "sent", "provider": result.provider, "message_id": result.message_id}
 
 
 @app.post("/v1/send", dependencies=[Depends(require_caller)])

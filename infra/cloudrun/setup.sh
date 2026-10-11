@@ -72,6 +72,8 @@ python3 -c 'import secrets;print(secrets.token_urlsafe(48),end="")' | mk_secret 
 python3 -c 'import secrets;print(secrets.token_urlsafe(32),end="")' | mk_secret notification-token
 unset DB_PASSWORD
 # Provider credentials: create them when you pick a provider (values are read from stdin, never from a file in Git):
+#   printf '%s' "$RESEND_API_KEY"     | gcloud secrets create resend-api-key     --data-file=-
+#   printf '%s' "$TWILIO_ACCOUNT_SID" | gcloud secrets create twilio-account-sid --data-file=-
 #   printf '%s' "$SENDGRID_API_KEY"   | gcloud secrets create sendgrid-api-key   --data-file=-
 #   printf '%s' "$SMTP_PASSWORD"      | gcloud secrets create smtp-password      --data-file=-
 #   printf '%s' "$TWILIO_AUTH_TOKEN"  | gcloud secrets create twilio-auth-token  --data-file=-
