@@ -36,7 +36,7 @@ from app.config import settings
 from app.db.database import SessionLocal
 from app.providers.gemini_provider import build_client, translate_error
 from app.providers.llm_errors import LLMError
-from app.services import evaluation_service, session_manager
+from app.services import evaluation_service, guardrail_service, session_manager
 from app.services.interview_service import InterviewSession
 
 logger = logging.getLogger(__name__)
@@ -161,6 +161,17 @@ def _still_running(interview_id: int) -> bool:
         db.close()
 
 
+def _record_flags(interview_id: int, flags: list[dict], offset_ms: int | None) -> None:
+    db = SessionLocal()
+    try:
+        for flag in flags:
+            guardrail_service.record_event(db, interview_id, flag, offset_ms)
+    except Exception:       # a failed log write must never disturb the interview
+        logger.exception("Could not record guardrail flags for interview %s", interview_id)
+    finally:
+        db.close()
+
+
 def _tab_switches(interview_id: int) -> int:
     from app.db.models import Interview
     db = SessionLocal()
@@ -263,6 +274,7 @@ class LiveInterview:
         self.nudges = 0
         self.tab_seen = 0
         self.ready_sent = False
+        self.live = None
 
     # ---- exercises ----------------------------------------------------------------------------------------
     async def give_exercise(self, kind: str | None) -> dict:
@@ -316,6 +328,8 @@ class LiveInterview:
         if text:
             self.session.transcript.append({"role": "candidate", "text": text, "ts": datetime.utcnow().isoformat()})
             await asyncio.to_thread(_persist, self.id, self.session, None)
+            await self._guard(guardrail_service.scan_candidate(text), guardrail_service.CORRECTION_FOR_INJECTION,
+                              "guardrail_injection")
 
     async def _flush_ai(self) -> None:
         text = "".join(self.ai_buf).strip()
@@ -324,6 +338,22 @@ class LiveInterview:
             self.session.transcript.append({"role": "assistant", "text": text, "topic": "", "move": "",
                                             "learned": "", "end": False, "ts": datetime.utcnow().isoformat()})
             await asyncio.to_thread(_persist, self.id, self.session, None)
+            await self._guard(guardrail_service.scan_interviewer(text), guardrail_service.CORRECTION_FOR_PROTECTED,
+                              "guardrail_protected_topic")
+
+    async def _guard(self, flags: list[dict], correction: str, correct_for: str) -> None:
+        """Log what was found for a human reviewer; where useful, steer the interviewer back (never ends the call)."""
+        if not flags:
+            return
+        offset = int(self.session.minutes_elapsed() * 60000)
+        await asyncio.to_thread(_record_flags, self.id, flags, offset)
+        logger.warning("Guardrail flags in interview %s: %s", self.id, [f["category"] for f in flags])
+        live = self.live
+        if live is not None and not self.finished and not self.wrapup_sent and any(f["type"] == correct_for for f in flags):
+            try:
+                await live.send_realtime_input(text=correction)
+            except Exception:
+                logger.exception("Could not send the guardrail note for interview %s", self.id)
 
     # ---- finishing ----------------------------------------------------------------------------------------
     async def finish(self, reason: str) -> None:
@@ -525,6 +555,7 @@ class LiveInterview:
                 self.session.no_exercise_tool = True
                 self.session.plain_live = True
                 live = await stack.enter_async_context(connect_live(self.session))
+            self.live = live
             if not self.ready_sent:
                 await self.ws.send_json({"type": "ready"})
                 self.ready_sent = True
@@ -540,6 +571,7 @@ class LiveInterview:
                 if not self.finished:
                     raise ConnectionError("The model connection closed")
             finally:
+                self.live = None
                 for task in tasks:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)

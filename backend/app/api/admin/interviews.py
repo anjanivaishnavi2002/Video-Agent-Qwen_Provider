@@ -1,6 +1,9 @@
 import logging
+from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.admin.candidates import candidate_row, evaluation_out, interview_row
@@ -12,7 +15,7 @@ from app.config import settings
 from app.db.models import AdminUser, Candidate, Interview, InterviewJob, Job
 from app.providers.llm_errors import LLMError
 from app.security import require_admin
-from app.services import chat_service, credit_service, evaluation_service, summary_service
+from app.services import chat_service, credit_service, evaluation_service, guardrail_service, summary_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/interviews", tags=["admin: interviews"])
@@ -106,8 +109,30 @@ def interview_detail(interview_id: int, db: Session = Depends(get_db), _: AdminU
         "video_size_bytes": i.video_size_bytes, "video_uploaded_at": i.video_uploaded_at,
         "events": [{"type": e.event_type, "timestamp": e.occurred_at, "offset_ms": e.offset_ms,
                     "details": e.details} for e in i.events],
+        "review_flags": guardrail_service.review_flags(list(i.events), ended_reason=i.end_reason),
+        "flags_advisory": guardrail_service.ADVISORY,
+        "flag_review": i.flag_review,
         "evaluation": evaluation_out(i.evaluation),
     }
+
+
+class FlagReviewIn(BaseModel):
+    status: Literal["cleared", "needs_followup", "confirmed"]
+    note: str = Field(default="", max_length=500)
+
+
+@router.put("/{interview_id}/flag-review")
+def review_flags(interview_id: int, data: FlagReviewIn, db: Session = Depends(get_db),
+                 admin: AdminUser = Depends(require_admin)):
+    """A person records what they decided about the flags (cleared / needs follow-up / confirmed). Nothing automatic."""
+    i = _get(db, interview_id)
+    if not credit_service.is_unlocked(i):
+        raise HTTPException(status_code=402, detail="Unlock this interview to review its flags.")
+    i.flag_review = {"status": data.status, "note": data.note.strip(), "by": admin.id, "by_email": admin.email,
+                     "at": datetime.utcnow().isoformat()}
+    db.commit()
+    logger.info("Admin %s marked the flags of interview %s as %s", admin.id, i.id, data.status)
+    return i.flag_review
 
 
 @router.post("/{interview_id}/unlock")

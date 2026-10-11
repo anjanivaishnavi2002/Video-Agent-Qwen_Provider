@@ -328,7 +328,58 @@ const EVENT_LABELS = {
   multiple_faces: "More than one face in view",
   head_movement: "Head movement",
   tab_hidden: "Left the page (tab / window switch)",
+  guardrail_injection: "Candidate tried to change the interviewer's instructions",
+  guardrail_protected_topic: "Interviewer touched a protected topic",
+  guardrail_personal_data: "Sensitive personal data requested or shared",
 };
+
+const REVIEW_OPTIONS = [
+  ["cleared", "Cleared - nothing wrong"],
+  ["needs_followup", "Needs a follow-up"],
+  ["confirmed", "Confirmed concern"],
+];
+const mmss = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}`;
+
+// Flags are observations for a PERSON to decide on. They never change a score or reject anyone automatically.
+function FlagsPanel({ i }) {
+  const [review, setReview] = useState(i.flag_review || null);
+  const [note, setNote] = useState(i.flag_review?.note || "");
+  const [msg, setMsg] = useState("");
+  const flags = i.review_flags || [];
+  async function save(status) {
+    setMsg("");
+    try { setReview(await api.reviewFlags(i.id, status, note)); setMsg("Saved."); } catch (e) { setMsg(e.message); }
+  }
+  return (
+    <section>
+      <h3>Review flags {flags.length > 0 && <span className="badge">{flags.length}</span>}</h3>
+      {flags.length === 0 ? <p className="muted small">Nothing was flagged during this interview.</p> : (
+        <ul className="small">
+          {flags.map((f) => (
+            <li key={f.type}>
+              <b>{f.label}</b> {f.severity === "review" ? <span className="badge">needs a look</span> : <span className="badge">info</span>}
+              {f.moments_ms?.length > 0 && <span className="muted"> - at {f.moments_ms.map(mmss).join(", ")} in the recording</span>}
+              {f.evidence && <div className="muted">"{f.evidence}"</div>}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="muted small">{i.flags_advisory}</p>
+      {flags.length > 0 && (
+        <div className="small">
+          <div className="chips">
+            {REVIEW_OPTIONS.map(([value, label]) => (
+              <button key={value} className={review?.status === value ? "primary" : ""} onClick={() => save(value)}>{label}</button>
+            ))}
+          </div>
+          <input style={{ width: "100%", marginTop: 8 }} maxLength={500} placeholder="Optional note for the record" value={note} onChange={(e) => setNote(e.target.value)} />
+          {review && <p className="muted">Last decision: <b>{review.status.replace("_", " ")}</b> by {review.by_email} on {String(review.at).slice(0, 10)}</p>}
+          {msg && <p className="muted">{msg}</p>}
+        </div>
+      )}
+    </section>
+  );
+}
 
 // Reviewer report: written-work scores, camera counts (faces detected) and tab switches. The candidate only sees feedback.
 function ReviewerReport({ i }) {
@@ -340,6 +391,7 @@ function ReviewerReport({ i }) {
   const switches = i.tab_switch_count || 0;
   return (
     <>
+      <FlagsPanel i={i} />
       <section>
         <h3>Proctoring</h3>
         <ul className="small">

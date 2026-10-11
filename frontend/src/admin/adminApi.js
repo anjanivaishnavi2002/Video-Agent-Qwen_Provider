@@ -132,6 +132,7 @@ export const api = {
   unlock: (id) => call(`/interviews/${id}/unlock`, { method: "POST" }),
   interviews: (params) => call("/interviews", { params }),
   interview: (id) => call(`/interviews/${id}`),
+  reviewFlags: (id, status, note) => call(`/interviews/${id}/flag-review`, { method: "PUT", body: { status, note } }),
   evaluate: (id) => call(`/interviews/${id}/evaluate`, { method: "POST" }),
   regenerateReport: (id) => call(`/interviews/${id}/report`, { method: "POST" }),
   notifications: (params) => call("/notifications", { params }),

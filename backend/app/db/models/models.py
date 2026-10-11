@@ -133,6 +133,7 @@ class Interview(Base):
     tab_switch_count = Column(Integer, nullable=False, default=0)  # browser/tab switches (2 warnings, the 3rd ends it)
     chat_tasks = Column(JSON)                   # tasks the AI set from the job description + experience
     chat_work = Column(JSON)                    # the candidate's answers per task id
+    flag_review = Column(JSON)                  # a person's decision on the proctoring flags: {status, note, by, at}
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

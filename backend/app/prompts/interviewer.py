@@ -3,6 +3,8 @@ import json
 from functools import lru_cache
 from string import Template
 
+from app.services.guardrail_service import SAFETY_RULES
+
 import yaml
 
 from app.config import settings
@@ -96,4 +98,5 @@ def build_system_prompt(
         bpo_context=format_bpo_context(load_bpo_context()),
         resume_profile=format_profile(resume_profile),
         resume_text_block=block,
+        safety_rules=SAFETY_RULES.strip(),
     )

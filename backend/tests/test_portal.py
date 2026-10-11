@@ -307,3 +307,26 @@ def test_interviewer_focus_comes_from_the_applied_roles_and_experience(client):
     assert focus["kinds"] == ["chat", "email"] and focus["level"] == "mid-level"
     assert "Chat Desk" in ctx["title"] and "Mail Desk" in ctx["title"] and "mid-level" in ctx["description"]
     assert "more than twice" in TAB_RULES and "MUST" in EXERCISE_RULES and "Please handle it" in EXERCISE_RULES
+
+
+def test_admin_reviews_flags_by_hand_and_only_after_unlock(client, monkeypatch):
+    from app.db.models import InterviewEvent
+    monkeypatch.setattr(settings, "REQUIRE_UNLOCK", True)
+    boss, rec = admin_h(client), admin_h(client, "rec2@example.com")
+    iid = _finished_interview(make_job(client)["id"])
+    with SessionLocal() as db:
+        db.add(InterviewEvent(interview_id=iid, event_type="multiple_faces", occurred_at=datetime(2026, 1, 1, 10, 3),
+                              offset_ms=42000, details={"faces": 2}))
+        db.commit()
+    body = {"status": "cleared", "note": "Family member walked past."}
+    assert client.put(f"/admin/interviews/{iid}/flag-review", headers=rec, json=body).status_code == 402   # locked
+    client.post("/admin/credits/grant", headers=boss, json={"amount": 20})
+    client.post(f"/admin/interviews/{iid}/unlock", headers=rec)
+    detail = client.get(f"/admin/interviews/{iid}", headers=rec).json()
+    assert detail["review_flags"][0]["type"] == "multiple_faces" and detail["review_flags"][0]["moments_ms"] == [42000]
+    assert "never rejected" in detail["flags_advisory"] and detail["flag_review"] is None
+    saved = client.put(f"/admin/interviews/{iid}/flag-review", headers=rec, json=body).json()
+    assert saved["status"] == "cleared" and saved["by_email"] == "rec2@example.com"
+    assert client.get(f"/admin/interviews/{iid}", headers=rec).json()["flag_review"]["note"] == body["note"]
+    assert client.put(f"/admin/interviews/{iid}/flag-review", headers=rec, json={"status": "reject"}).status_code == 422
+    assert client.put(f"/admin/interviews/{iid}/flag-review", json=body).status_code == 401

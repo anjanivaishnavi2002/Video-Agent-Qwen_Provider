@@ -42,6 +42,8 @@ system_template: |
   - Ending: when you have enough information to understand the candidate (or you are told time is up),
     set end_interview to true, thank them warmly, say the team will be in touch, and ask no question.
 
+  $safety_rules
+
   OUTPUT FORMAT - reply with ONE JSON object only, with these keys in this order:
   - learned: short facts the candidate revealed in their latest answer (empty string on the opening turn or if nothing new)
   - topic: 2-6 words naming the topic of this turn

@@ -14,6 +14,8 @@ import useSessionEvents from "../hooks/useSessionEvents";
 import useTabGuard from "../hooks/useTabGuard";
 import ExerciseModal from "../components/ExerciseModal";
 import TabWarning from "../components/TabWarning";
+import CameraNotice from "../components/CameraNotice";
+import useCameraQuality from "../hooks/useCameraQuality";
 
 import {
   endInterview,
@@ -94,8 +96,13 @@ function InterviewPage({
   );
 
   // Face events are tied to the interview session and to the recording timeline.
+  const [cameraEvent, setCameraEvent] = useState(null);
+  const tooDark = useCameraQuality(stream);
   const handleFaceEvent = useCallback(
-    (event) => pushEvent({ ...event, offset_ms: offsetMs() }),
+    (event) => {
+      pushEvent({ ...event, offset_ms: offsetMs() });
+      setCameraEvent({ type: event.type, at: Date.now() });
+    },
     [pushEvent, offsetMs]
   );
 
@@ -455,6 +462,7 @@ function InterviewPage({
       </footer>
 
       <TabWarning info={tabWarning} onClose={() => setTabWarning(null)} />
+      {viewStatus !== "finished" && <CameraNotice event={cameraEvent} dark={tooDark} />}
       {exercise && viewStatus !== "finished" && (
         <ExerciseModal
           key={exercise.id}

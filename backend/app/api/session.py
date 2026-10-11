@@ -130,6 +130,8 @@ def start_session(data: StartRequest, db: Session = Depends(get_db)):
     # Same answer for "no such candidate" and "wrong token": candidate ids must not be guessable/enumerable.
     if not candidate or not _same(candidate.invite_token, data.invite_token):
         raise HTTPException(status_code=403, detail="This interview link is not valid.")
+    if not candidate.consented_at:     # never record someone who has not accepted the consent form (server-side rule)
+        raise HTTPException(status_code=403, detail="Please accept the consent form before starting the interview.")
     allowed, reason = candidate_service.can_start_interview(candidate)
     if not allowed:
         raise HTTPException(status_code=409, detail=reason)

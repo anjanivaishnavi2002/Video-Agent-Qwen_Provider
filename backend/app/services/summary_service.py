@@ -10,6 +10,7 @@ There is no hire / reject recommendation. The event report is plain counting.
 import logging
 from datetime import datetime
 
+from app.services import guardrail_service
 from app.config import settings
 from app.db.database import SessionLocal
 from sqlalchemy.orm import object_session
@@ -141,6 +142,8 @@ def summarize_events(events) -> dict:
         "face_missing_seconds": round(missing_ms / 1000, 1),
         "face_missing_at_end": missing_since is not None,
         "timeline": timeline,
+        "review_flags": guardrail_service.review_flags(list(events)),
+        "flags_advisory": guardrail_service.ADVISORY,
         "note": EVENT_NOTE,
     }
 

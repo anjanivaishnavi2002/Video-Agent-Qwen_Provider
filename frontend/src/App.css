@@ -41,6 +41,11 @@
 .tab-warning button { margin-left: 12px; padding: 6px 12px; border-radius: 8px; border: 1px solid currentColor; background: transparent;
   color: inherit; cursor: pointer; font: inherit; }
 
+/* Camera reminders (gentle, never stop the interview) */
+.camera-notice { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 40; max-width: min(560px, 92vw);
+  padding: 10px 16px; border-radius: 12px; background: #fff3cd; color: #5c4400; border: 1px solid #f0b400; font-size: 14px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.2); text-align: center; }
+
 /* ---------- Candidate portal (sign-in, job board, apply, process picker) ---------- */
 .portal-auth { display: grid; place-items: center; min-height: 100vh; }
 .auth-card { width: min(440px, 92vw); background: #fff; border-radius: 16px; padding: 28px; box-shadow: 0 8px 30px rgba(20,30,60,.1); }
