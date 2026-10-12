@@ -35,3 +35,35 @@ def ensure_bootstrap_admin(db: Session) -> bool:
                  full_name="Administrator")
     logger.info("Created the initial admin account from ADMIN_BOOTSTRAP_* (remove these variables now).")
     return True
+
+
+def deactivate_admin(db: Session, email: str) -> AdminUser:
+    """Disable an admin login (kept in the table so credit/audit history stays intact). Refuses to remove the last
+    active admin so nobody can lock themselves out. Bumping token_version signs out any session already issued."""
+    admin = db.query(AdminUser).filter(AdminUser.email == email.strip().lower()).first()
+    if not admin:
+        raise ValueError("no admin with this e-mail")
+    if admin.is_active and admin.role == "admin":
+        others = db.query(AdminUser).filter(AdminUser.is_active.is_(True), AdminUser.role == "admin",
+                                            AdminUser.id != admin.id).count()
+        if not others:
+            raise ValueError("this is the only active admin; create another admin first")
+    admin.is_active = False
+    admin.token_version = (admin.token_version or 0) + 1
+    db.commit()
+    db.refresh(admin)
+    return admin
+
+
+def reset_admin_password(db: Session, email: str, password: str) -> AdminUser:
+    admin = db.query(AdminUser).filter(AdminUser.email == email.strip().lower()).first()
+    if not admin:
+        raise ValueError("no admin with this e-mail")
+    if len(password) < 10 or len(password.encode("utf-8")) > 72:
+        raise ValueError("password must be 10-72 characters")
+    admin.password_hash = hash_password(password)
+    admin.is_active = True
+    admin.token_version = (admin.token_version or 0) + 1
+    db.commit()
+    db.refresh(admin)
+    return admin

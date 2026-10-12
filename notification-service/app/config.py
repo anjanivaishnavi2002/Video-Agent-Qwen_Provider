@@ -28,11 +28,15 @@ class Settings(BaseSettings):
     EMAIL_REPLY_TO: str = ""                # optional
 
     # ---- SMS ------------------------------------------------------------------------------------
-    SMS_PROVIDER: str = "console"           # console | twilio
+    SMS_PROVIDER: str = "console"           # console | twilio | msg91
     TWILIO_ACCOUNT_SID: str = ""
     TWILIO_AUTH_TOKEN: str = ""             # secret
     TWILIO_FROM_NUMBER: str = ""            # or a Messaging Service SID below
     TWILIO_MESSAGING_SERVICE_SID: str = ""
+    MSG91_AUTH_KEY: str = ""                # secret (SMS_PROVIDER=msg91)
+    MSG91_TEMPLATE_ID: str = ""             # DLT-approved Flow template id (India does not allow free-text SMS)
+    MSG91_TEMPLATE_VAR: str = "message"     # the template variable that receives the message text
+    MSG91_COUNTRY_CODE: str = "91"          # added to 10-digit numbers
 
     # ---- Voice calls (text-to-speech phone call) --------------------------------------------------
     VOICE_PROVIDER: str = "console"         # console | twilio (reuses the TWILIO_* credentials above)

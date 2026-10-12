@@ -32,20 +32,22 @@ wire_secret() {      # ENV_NAME secret-name
   fi
   return 1
 }
-HAVE_RESEND=0; HAVE_TWILIO=0
+HAVE_RESEND=0; HAVE_TWILIO=0; HAVE_MSG91=0
 wire_secret RESEND_API_KEY resend-api-key && HAVE_RESEND=1
+wire_secret MSG91_AUTH_KEY msg91-auth-key && HAVE_MSG91=1
 if wire_secret TWILIO_ACCOUNT_SID twilio-account-sid && wire_secret TWILIO_AUTH_TOKEN twilio-auth-token; then HAVE_TWILIO=1; fi
 wire_secret SENDGRID_API_KEY sendgrid-api-key || true
 wire_secret SMTP_PASSWORD smtp-password || true
 [ -n "${EXTRA_NOTIFY_SECRETS:-}" ] && NOTIFY_SECRETS="$NOTIFY_SECRETS,$EXTRA_NOTIFY_SECRETS"
 # Pick the providers from what is configured (override with EMAIL_PROVIDER / SMS_PROVIDER / VOICE_PROVIDER in env.local.sh)
 [ "$HAVE_RESEND" = 1 ] && : "${EMAIL_PROVIDER:=resend}"
+[ "$HAVE_MSG91" = 1 ] && : "${SMS_PROVIDER:=msg91}"
 if [ "$HAVE_TWILIO" = 1 ]; then : "${SMS_PROVIDER:=twilio}"; : "${VOICE_PROVIDER:=twilio}"; fi
 echo "   e-mail: ${EMAIL_PROVIDER:-console}   sms: ${SMS_PROVIDER:-console}   voice: ${VOICE_PROVIDER:-console}"
 gcloud run deploy notification-service \
   --image "$REGISTRY/notification:$TAG" --region "$REGION" --service-account "$NOTIFY_SA" \
   --no-allow-unauthenticated --cpu 1 --memory 256Mi --concurrency 40 --min-instances 0 --max-instances 3 \
-  --set-env-vars "^@^ENVIRONMENT=production@LOG_FORMAT=json@ORGANIZATION_NAME=${ORGANIZATION_NAME:-Your Company}@EMAIL_PROVIDER=${EMAIL_PROVIDER:-console}@EMAIL_FROM=${EMAIL_FROM:-}@EMAIL_REPLY_TO=${EMAIL_REPLY_TO:-}@SMS_PROVIDER=${SMS_PROVIDER:-console}@VOICE_PROVIDER=${VOICE_PROVIDER:-console}@TWILIO_FROM_NUMBER=${TWILIO_FROM_NUMBER:-}@TWILIO_MESSAGING_SERVICE_SID=${TWILIO_MESSAGING_SERVICE_SID:-}@TWILIO_VOICE_FROM_NUMBER=${TWILIO_VOICE_FROM_NUMBER:-}@VOICE_LANGUAGE=${VOICE_LANGUAGE:-en-IN}@REQUIRE_TOKEN=true" \
+  --set-env-vars "^@^ENVIRONMENT=production@LOG_FORMAT=json@ORGANIZATION_NAME=${ORGANIZATION_NAME:-Your Company}@EMAIL_PROVIDER=${EMAIL_PROVIDER:-console}@EMAIL_FROM=${EMAIL_FROM:-}@EMAIL_REPLY_TO=${EMAIL_REPLY_TO:-}@SMS_PROVIDER=${SMS_PROVIDER:-console}@VOICE_PROVIDER=${VOICE_PROVIDER:-console}@MSG91_TEMPLATE_ID=${MSG91_TEMPLATE_ID:-}@MSG91_TEMPLATE_VAR=${MSG91_TEMPLATE_VAR:-message}@TWILIO_FROM_NUMBER=${TWILIO_FROM_NUMBER:-}@TWILIO_MESSAGING_SERVICE_SID=${TWILIO_MESSAGING_SERVICE_SID:-}@TWILIO_VOICE_FROM_NUMBER=${TWILIO_VOICE_FROM_NUMBER:-}@VOICE_LANGUAGE=${VOICE_LANGUAGE:-en-IN}@REQUIRE_TOKEN=true" \
   --set-secrets "$NOTIFY_SECRETS"
 NOTIFY_URL="$(gcloud run services describe notification-service --region "$REGION" --format 'value(status.url)')"
 gcloud run services add-iam-policy-binding notification-service --region "$REGION" \

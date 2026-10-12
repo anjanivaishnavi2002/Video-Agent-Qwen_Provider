@@ -93,3 +93,35 @@ def test_service_endpoints_and_resend_provider(monkeypatch):
         assert c.post("/v1/sms", json={"to": "+91 98765 43210", "body": "x"}, headers=h).json()["status"] == "sent"
         assert c.post("/v1/call", json={"to": "+91 98765 43210", "message": "x"}, headers=h).json()["status"] == "sent"
         assert c.post("/v1/sms", json={"to": "abc", "body": "x"}, headers=h).status_code == 400
+
+
+def test_msg91_flow_payload_and_number_normalising():
+    from app.clients.msg91 import Msg91Client, Msg91Error, normalize_mobile
+    seen = {}
+
+    def handler(request):
+        seen["key"] = request.headers["authkey"]
+        seen["body"] = request.read().decode().replace(" ", "")
+        return httpx.Response(200, json={"type": "success", "message": "req_123"})
+
+    c = Msg91Client("k", "tpl1", http=_http(handler))
+    assert c.send_flow(to="+91 98765 43210", variables={"message": "hi"}) == "req_123"
+    assert seen["key"] == "k" and '"mobiles":"919876543210"' in seen["body"] and '"template_id":"tpl1"' in seen["body"]
+    assert normalize_mobile("9876543210") == "919876543210"
+    with pytest.raises(ValueError):
+        normalize_mobile("123")
+    err = Msg91Client("k", "t", http=_http(lambda r: httpx.Response(200, json={"type": "error", "message": "bad template"})))
+    with pytest.raises(Msg91Error) as e:
+        err.send_flow(to="9876543210", variables={"message": "x"})
+    assert "bad template" in str(e.value) and e.value.retryable is False
+    with pytest.raises(ValueError):
+        Msg91Client("", "t")
+    with pytest.raises(ValueError):
+        Msg91Client("k", "")
+
+
+def test_msg91_provider_is_selectable():
+    from app.config import Settings
+    from app.providers.sms import build_sms_provider
+    cfg = Settings(SMS_PROVIDER="msg91", MSG91_AUTH_KEY="k", MSG91_TEMPLATE_ID="t")
+    assert build_sms_provider(cfg).name == "msg91"
