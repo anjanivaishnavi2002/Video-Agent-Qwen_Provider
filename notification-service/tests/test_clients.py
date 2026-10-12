@@ -125,3 +125,13 @@ def test_msg91_provider_is_selectable():
     from app.providers.sms import build_sms_provider
     cfg = Settings(SMS_PROVIDER="msg91", MSG91_AUTH_KEY="k", MSG91_TEMPLATE_ID="t")
     assert build_sms_provider(cfg).name == "msg91"
+
+
+def test_msg91_without_template_starts_but_send_reports_it():
+    from app.config import Settings
+    from app.providers.base import ProviderError
+    from app.providers.sms import build_sms_provider
+    provider = build_sms_provider(Settings(SMS_PROVIDER="msg91", MSG91_AUTH_KEY="k", MSG91_TEMPLATE_ID=""))
+    with pytest.raises(ProviderError) as e:
+        provider.send(to="+919876543210", body="hi")
+    assert "template" in str(e.value).lower()

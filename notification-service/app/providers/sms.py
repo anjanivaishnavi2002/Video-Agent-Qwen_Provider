@@ -36,15 +36,26 @@ class TwilioSms(SmsProvider):
 
 
 class Msg91Sms(SmsProvider):
-    """MSG91 Flow API (DLT templates, for India). The message text fills one variable of the approved template."""
+    """MSG91 Flow API (DLT templates, for India). The message text fills one variable of the approved template.
+
+    A missing key or template id does NOT stop the service starting (that would block e-mail and calls too); each SMS
+    attempt then fails with a clear message that shows in the admin Notifications tab."""
     name = "msg91"
 
     def __init__(self, cfg: Settings):
         self.var = cfg.MSG91_TEMPLATE_VAR
-        self.client = Msg91Client(cfg.MSG91_AUTH_KEY, cfg.MSG91_TEMPLATE_ID, default_country_code=cfg.MSG91_COUNTRY_CODE,
-                                  timeout=cfg.REQUEST_TIMEOUT_SECONDS)
+        self.client = None
+        self.config_error = None
+        try:
+            self.client = Msg91Client(cfg.MSG91_AUTH_KEY, cfg.MSG91_TEMPLATE_ID,
+                                      default_country_code=cfg.MSG91_COUNTRY_CODE, timeout=cfg.REQUEST_TIMEOUT_SECONDS)
+        except ValueError as exc:
+            self.config_error = f"MSG91 is not configured: {exc}"
+            logger.warning(self.config_error)
 
     def send(self, *, to, body) -> SendResult:
+        if self.client is None:
+            raise ProviderError(self.config_error or "MSG91 is not configured")
         try:
             return SendResult(self.name, self.client.send_flow(to=to, variables={self.var: body}))
         except Msg91Error as exc:
