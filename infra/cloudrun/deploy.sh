@@ -14,6 +14,7 @@ else
   echo "== Build + push images (Cloud Build; no local Docker needed) =="
   gcloud builds submit "$ROOT/backend"              --tag "$REGISTRY/backend:$TAG"      --timeout 3000s
   gcloud builds submit "$ROOT/notification-service" --tag "$REGISTRY/notification:$TAG"
+  gcloud builds submit "$ROOT/llm-gateway"          --tag "$REGISTRY/llm-gateway:$TAG"
   gcloud builds submit "$ROOT/frontend"             --tag "$REGISTRY/frontend:$TAG"
 fi
 
@@ -53,10 +54,53 @@ NOTIFY_URL="$(gcloud run services describe notification-service --region "$REGIO
 gcloud run services add-iam-policy-binding notification-service --region "$REGION" \
   --member "serviceAccount:$BACKEND_SA" --role roles/run.invoker
 
+echo "== LLM gateway (private: holds the OpenAI / Anthropic / Gemini-API / DeepSeek keys; only the backend may call it) =="
+# Needs the one-time ./setup-llm-gateway.sh (service account + llm-gateway-token). Skipped cleanly if that was not run, so
+# a deploy without a gateway behaves exactly as before (Vertex AI only).
+LLM_GW_SA="${LLM_GW_SA:-interview-llm-gateway@${PROJECT_ID}.iam.gserviceaccount.com}"
+LLM_ENV=""; LLM_SECRET=""
+if have_secret llm-gateway-token && gcloud iam service-accounts describe "$LLM_GW_SA" >/dev/null 2>&1; then
+  GW_SECRETS="GATEWAY_API_TOKEN=llm-gateway-token:latest"
+  GW_PROVIDERS=""
+  wire_gw_secret() {      # ENV_NAME secret-name provider-label
+    if have_secret "$2"; then
+      gcloud secrets add-iam-policy-binding "$2" --member "serviceAccount:$LLM_GW_SA" \
+        --role roles/secretmanager.secretAccessor >/dev/null
+      GW_SECRETS="$GW_SECRETS,$1=$2:latest"; GW_PROVIDERS="$GW_PROVIDERS $3"
+    fi
+  }
+  # Secret names can be overridden in env.local.sh (OPENAI_SECRET=..., ANTHROPIC_SECRET=..., GEMINI_API_SECRET=..., DEEPSEEK_SECRET=...)
+  wire_gw_secret OPENAI_API_KEY    "${OPENAI_SECRET:-openai-api-key}"         openai
+  wire_gw_secret ANTHROPIC_API_KEY "${ANTHROPIC_SECRET:-anthropic-api-key}"   anthropic
+  wire_gw_secret GEMINI_API_KEY    "${GEMINI_API_SECRET:-gemini-api-key}"     gemini_api
+  wire_gw_secret DEEPSEEK_API_KEY  "${DEEPSEEK_SECRET:-deepseek-api-key}"     deepseek
+  echo "   providers with a key:${GW_PROVIDERS:- NONE (create the key secrets, see docs/LLM_GATEWAY.md)}"
+  GW_ENV="ENVIRONMENT=production@LOG_FORMAT=json@REQUIRE_TOKEN=true@GATEWAY_WEIGHTS=${GATEWAY_WEIGHTS:-openai:1,anthropic:1,gemini_api:1,deepseek:1}@GATEWAY_EXCLUDE=${GATEWAY_EXCLUDE:-}"
+  for v in OPENAI_MODEL ANTHROPIC_MODEL GEMINI_API_MODEL DEEPSEEK_MODEL; do
+    [ -n "${!v:-}" ] && GW_ENV="$GW_ENV@$v=${!v}"
+  done
+  gcloud run deploy llm-gateway \
+    --image "$REGISTRY/llm-gateway:$TAG" --region "$REGION" --service-account "$LLM_GW_SA" \
+    --no-allow-unauthenticated --cpu 1 --memory 512Mi --concurrency 20 --timeout 120 --min-instances 0 --max-instances 5 \
+    --set-env-vars "^@^$GW_ENV" --set-secrets "$GW_SECRETS"
+  LLM_GW_URL="$(gcloud run services describe llm-gateway --region "$REGION" --format 'value(status.url)')"
+  gcloud run services add-iam-policy-binding llm-gateway --region "$REGION" \
+    --member "serviceAccount:$BACKEND_SA" --role roles/run.invoker
+  gcloud secrets add-iam-policy-binding llm-gateway-token --member "serviceAccount:$BACKEND_SA" \
+    --role roles/secretmanager.secretAccessor >/dev/null
+  # Vertex AI stays the primary model. LLM_GATEWAY_SHARE = % of requests sent to the gateway first (spread across all its
+  # providers); the rest go to Vertex first, and each side is the other's fallback. 0 = gateway only when Vertex fails.
+  LLM_ENV=",LLM_GATEWAY_URL=$LLM_GW_URL,LLM_GATEWAY_AUTH_MODE=both,LLM_GATEWAY_SHARE=${LLM_GATEWAY_SHARE:-50}"
+  LLM_SECRET=",LLM_GATEWAY_TOKEN=llm-gateway-token:latest"
+else
+  LLM_GW_URL="(not deployed: run ./setup-llm-gateway.sh once)"
+  echo "   skipped (llm-gateway-token / service account not found). The backend keeps using Vertex AI only."
+fi
+
 BACKEND_COMMON=(
   --image "$REGISTRY/backend:$TAG" --region "$REGION" --service-account "$BACKEND_SA"
-  --set-env-vars "ENVIRONMENT=production,LOG_FORMAT=json,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=$VERTEX_LOCATION,VERTEX_AI_MODEL=$VERTEX_AI_MODEL,INTERVIEW_MODE=live,GEMINI_LIVE_MODEL=${GEMINI_LIVE_MODEL:-gemini-3.8-live},GEMINI_LIVE_LOCATION=${GEMINI_LIVE_LOCATION:-us-central1},STORAGE_BACKEND=gcs,GCS_BUCKET_NAME=$BUCKET,GCS_SIGNING_SERVICE_ACCOUNT=$BACKEND_SA,NOTIFICATION_SERVICE_URL=$NOTIFY_URL,NOTIFICATION_AUTH_MODE=both,ENABLE_DEBUG_ENDPOINTS=false,PUBLIC_APPLY_ENABLED=false,REQUIRE_UNLOCK=true,UNLOCK_CREDIT_COST=${UNLOCK_CREDIT_COST:-10},AUTO_CREATE_SCHEMA=false,PRELOAD_MODELS=${PRELOAD_MODELS:-false},CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173},FRONTEND_BASE_URL=${FRONTEND_BASE_URL:-http://localhost:5173},ORGANIZATION_NAME=${ORGANIZATION_NAME:-Your Company}"
-  --set-secrets "DATABASE_URL=database-url:latest,JWT_SECRET=jwt-secret:latest,NOTIFICATION_SERVICE_TOKEN=notification-token:latest"
+  --set-env-vars "ENVIRONMENT=production,LOG_FORMAT=json,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=$VERTEX_LOCATION,VERTEX_AI_MODEL=$VERTEX_AI_MODEL,INTERVIEW_MODE=live,GEMINI_LIVE_MODEL=${GEMINI_LIVE_MODEL:-gemini-3.8-live},GEMINI_LIVE_LOCATION=${GEMINI_LIVE_LOCATION:-us-central1},STORAGE_BACKEND=gcs,GCS_BUCKET_NAME=$BUCKET,GCS_SIGNING_SERVICE_ACCOUNT=$BACKEND_SA,NOTIFICATION_SERVICE_URL=$NOTIFY_URL,NOTIFICATION_AUTH_MODE=both,ENABLE_DEBUG_ENDPOINTS=false,PUBLIC_APPLY_ENABLED=false,REQUIRE_UNLOCK=true,UNLOCK_CREDIT_COST=${UNLOCK_CREDIT_COST:-10},AUTO_CREATE_SCHEMA=false,PRELOAD_MODELS=${PRELOAD_MODELS:-false},CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173},FRONTEND_BASE_URL=${FRONTEND_BASE_URL:-http://localhost:5173},ORGANIZATION_NAME=${ORGANIZATION_NAME:-Your Company}${LLM_ENV}"
+  --set-secrets "DATABASE_URL=database-url:latest,JWT_SECRET=jwt-secret:latest,NOTIFICATION_SERVICE_TOKEN=notification-token:latest${LLM_SECRET}"
 )
 
 echo "== Database migrations (Cloud Run Job: runs once, never from several instances at the same time) =="
@@ -88,6 +132,7 @@ cat <<MSG
 Frontend : $FRONTEND_URL        (admin sign-in: $FRONTEND_URL/admin/login)
 Backend  : $BACKEND_URL
 Notify   : $NOTIFY_URL  (private)
+LLM gw   : $LLM_GW_URL  (private)
 
 Still to do once:
   1. Bucket CORS for direct recording uploads:

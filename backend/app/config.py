@@ -90,6 +90,16 @@ class Settings(BaseSettings):
     OLLAMA_NUM_CTX: int = 4096
     OLLAMA_TIMEOUT_SECONDS: float = 180.0           # CPU: the first reply after a restart is slow
 
+    # ---- LLM gateway (separate private Cloud Run service holding the OpenAI / Anthropic / Gemini-API / DeepSeek keys) ----
+    # "" = off (Vertex only). When set, Vertex stays the primary and the gateway is the automatic fallback.
+    LLM_GATEWAY_URL: str = ""               # e.g. https://llm-gateway-xxxx.run.app
+    LLM_GATEWAY_TOKEN: str = ""             # shared secret (Secret Manager)
+    LLM_GATEWAY_AUTH_MODE: str = "token"    # token | iam | both | none
+    LLM_GATEWAY_TIMEOUT_SECONDS: float = 90.0
+    # Percent (0-100) of requests sent to the gateway FIRST, spreading load across all its providers; the rest go to
+    # Vertex first. Whichever side is tried first, the other is the fallback. 0 = Vertex first always (pure fallback).
+    LLM_GATEWAY_SHARE: int = 0
+
     # Optional explicit override of the model name (OLLAMA_MODEL / VERTEX_AI_MODEL). Normally leave empty.
     LLM_MODEL: str = ""
 

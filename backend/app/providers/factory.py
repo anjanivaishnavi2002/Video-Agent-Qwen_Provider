@@ -19,6 +19,12 @@ def get_llm():
                 else:
                     from app.providers.gemini_provider import GeminiProvider
                     _provider = GeminiProvider()
+                    if settings.LLM_GATEWAY_URL.strip():
+                        # Vertex stays the primary; the llm-gateway (OpenAI/Anthropic/Gemini API/DeepSeek) is the
+                        # automatic fallback and, with LLM_GATEWAY_SHARE > 0, takes that share of requests first.
+                        from app.providers.gateway_provider import GatewayClient, RoutedLLM
+                        _provider = RoutedLLM(_provider, GatewayClient(settings.LLM_GATEWAY_URL),
+                                              settings.LLM_GATEWAY_SHARE)
     return _provider
 
 

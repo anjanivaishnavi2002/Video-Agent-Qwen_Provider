@@ -131,3 +131,7 @@ There is no question list anywhere; contact details (e-mail/phone) are never put
 * CORS: explicit frontend origins, explicit methods/headers, no credentials. nginx adds CSP, `X-Frame-Options`, `nosniff`, a restrictive Permissions-Policy.
 * Logs: structured JSON, no request bodies, no tokens/passwords/e-mails/phone numbers, model output is not logged.
 * Production start-up refuses unsafe settings (see `config.py`).
+
+## LLM gateway
+
+Gemini on Vertex AI remains the primary model. A separate private service, `llm-gateway`, holds the OpenAI / Anthropic / Gemini-API / DeepSeek keys; the backend uses it as the automatic fallback and can send a configurable share of requests to it first (spread by weight, with failover). See `docs/LLM_GATEWAY.md`.
